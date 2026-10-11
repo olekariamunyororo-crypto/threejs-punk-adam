@@ -23,6 +23,12 @@ import { EnemyTrainingEnv } from "./EnemyTrainingEnv.js";
 
 const ADAM_SMASHER_URL = "/models/adam_smasher_rigged.glb";
 
+/** Optional RL package — never a static string so Vite cannot fail the build. */
+async function loadIgnitionAI() {
+  const name = ["ignition", "ai"].join("");
+  return import(/* @vite-ignore */ name);
+}
+
 /**
  * @param {object} opts
  * @param {THREE.Camera} opts.camera
@@ -145,7 +151,6 @@ export function setupEnemyAI({
     const alive = trainingEnv.isAlive();
 
     enemyRoot.position.copy(pos);
-    // Offset so feet sit on ground if model pivot is at center
     enemyRoot.rotation.y = yaw;
     enemyRoot.visible = alive;
 
@@ -204,7 +209,11 @@ export function setupEnemyAI({
 
   async function startTraining(algorithm = "dqn") {
     try {
-      const { IgnitionEnvTFJS } = await import("ignitionai");
+      const mod = await loadIgnitionAI();
+      const IgnitionEnvTFJS = mod.IgnitionEnvTFJS;
+      if (!IgnitionEnvTFJS) {
+        throw new Error("IgnitionEnvTFJS not exported");
+      }
       ignition = new IgnitionEnvTFJS(trainingEnv);
       if (typeof ignition.setSpeed === "function") {
         ignition.setSpeed(20);
@@ -214,7 +223,7 @@ export function setupEnemyAI({
       return ignition;
     } catch (err) {
       console.warn(
-        "[EnemyAI] ignitionai not installed. Run: npm install ignitionai\n",
+        "[EnemyAI] ignitionai not installed (optional). Model still works.\n",
         err?.message ?? err,
       );
       return null;
@@ -223,7 +232,8 @@ export function setupEnemyAI({
 
   async function startInference() {
     try {
-      const { IgnitionEnvTFJS } = await import("ignitionai");
+      const mod = await loadIgnitionAI();
+      const IgnitionEnvTFJS = mod.IgnitionEnvTFJS;
       if (!ignition) {
         ignition = new IgnitionEnvTFJS(trainingEnv);
       }
