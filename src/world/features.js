@@ -30,6 +30,8 @@ export const FEATURES = {
   inspector: true,
   /** Phase 1 FPS: force walk-only, crosshair, no orbit */
   gameWalk: true,
+  /** Spawn Adam Smasher enemy NPC (GLB + TrainingEnv). */
+  trainEnemies: true,
 };
 
 export const STRIP_ORDER = [

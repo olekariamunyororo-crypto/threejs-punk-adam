@@ -26,13 +26,14 @@ const ADAM_SMASHER_URL = "/models/adam_smasher_rigged.glb";
 /**
  * @param {object} opts
  * @param {THREE.Camera} opts.camera
- * @param {THREE.Object3D[]} opts.colliders  meshes that already have boundsTree
+ * @param {THREE.Object3D[]} opts.colliders
  * @param {THREE.Object3D|null} opts.ground
- * @param {THREE.Object3D|null} opts.model   city root (ground probes)
+ * @param {THREE.Object3D|null} opts.model
  * @param {THREE.Scene} opts.scene
  * @param {THREE.Vector3[]} [opts.spawnPoints]
  * @param {boolean} [opts.autoTrain=false]
- * @param {object} [opts.gltfLoader]  optional shared loader from createGltfLoaders
+ * @param {number} [opts.modelScale=1]
+ * @param {object} [opts.gltfLoader]
  * @returns {object} API handle
  */
 export function setupEnemyAI({
@@ -43,6 +44,7 @@ export function setupEnemyAI({
   scene = null,
   spawnPoints = [],
   autoTrain = false,
+  modelScale = 1,
   gltfLoader = null,
 } = {}) {
   const trainingEnv = new EnemyTrainingEnv({
@@ -52,6 +54,9 @@ export function setupEnemyAI({
     model,
     spawnPoints,
   });
+
+  // Place enemy at a spawn point immediately (otherwise stays at origin)
+  trainingEnv.reset();
 
   let ignition = null;
   let enemyRoot = null;
@@ -79,13 +84,14 @@ export function setupEnemyAI({
       const root = gltf.scene;
       root.name = "AdamSmasher_Enemy";
 
-      root.scale.setScalar(1);
+      root.scale.setScalar(modelScale);
       root.rotation.y = 0;
 
       root.traverse((child) => {
         if (child.isMesh) {
           child.castShadow = true;
           child.receiveShadow = true;
+          child.frustumCulled = true;
         }
       });
 
@@ -121,6 +127,10 @@ export function setupEnemyAI({
       }
 
       syncEnemyVisual(0);
+      console.info(
+        "[EnemyAI] Adam Smasher spawned at",
+        trainingEnv.getEnemyPosition().toArray().map((n) => n.toFixed(2)),
+      );
       return root;
     })();
 
@@ -135,6 +145,7 @@ export function setupEnemyAI({
     const alive = trainingEnv.isAlive();
 
     enemyRoot.position.copy(pos);
+    // Offset so feet sit on ground if model pivot is at center
     enemyRoot.rotation.y = yaw;
     enemyRoot.visible = alive;
 
@@ -170,11 +181,12 @@ export function setupEnemyAI({
     const mat = new THREE.MeshBasicMaterial({
       color: 0xff2244,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.85,
     });
     fallbackMesh = new THREE.Mesh(geo, mat);
     fallbackMesh.name = "EnemyAI_Fallback";
     sceneRef.add(fallbackMesh);
+    syncFallback();
     return fallbackMesh;
   }
 
@@ -249,13 +261,11 @@ export function setupEnemyAI({
     loadEnemyModel,
     startTraining,
     startInference,
-    /** Call every frame: updates position, yaw, animations, fallback */
     update(delta = 1 / 60) {
       syncEnemyVisual(delta);
       syncFallback();
     },
     ensureFallback,
-    /** Damage the NPC from the player (hitscan / projectile) */
     applyDamage(amount) {
       trainingEnv.applyDamage(amount);
     },
