@@ -46,6 +46,9 @@ import {
   DEFAULT_LOOK_PRESET,
   LOOK_PRESETS,
 } from "./post/look/cyberpunkLook.js";
+import { FEATURES } from "./world/features.js";
+import { setupEnemyAI } from "./ai/setupEnemyAI.js";
+import { QUADRA_START } from "./world/car/loadCar.js";
 
 const loader = createLoaderOverlay();
 
@@ -140,9 +143,6 @@ async function init(loaderOverlay) {
   const adaptiveDpr = createAdaptiveDprController({
     renderer,
     pipeline,
-    // Once FPS forces the pixel ratio down, also shed DOF, lensflare, and
-    // billboard video decode — all comparatively expensive once we know the
-    // device is struggling.
     onForcedLow: () => {
       performanceProfile.dof = false;
       pipeline.perf.setDofEnabled(false);
@@ -153,8 +153,6 @@ async function init(loaderOverlay) {
   });
   adaptiveDpr.onResize();
 
-  // Adaptive DPR must not react to intro / rain-glass FPS — that hitch was
-  // permanently locking capable Androids into the low-DPR path before ENTER.
   const adaptiveSampleGate = { allow: false };
 
   const performanceTools = createPerformanceDevTools({
@@ -173,6 +171,36 @@ async function init(loaderOverlay) {
     getFinishedIntro: () => appShell?.isFinishedIntro?.() ?? false,
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
+
+  // -----------------------------------------------------------------------
+  // Adam Smasher — spawn next to the Quadra car
+  // Car world position: QUADRA_START.position ≈ [-128, -5.47, 33]
+  // -----------------------------------------------------------------------
+  let enemyAI = null;
+  if (FEATURES.trainEnemies) {
+    const carPos = QUADRA_START.position;
+    // Offset a few meters beside the car (toward the player start / alley)
+    const spawnNextToCar = [
+      new THREE.Vector3(carPos[0] + 3.5, carPos[1] + 1.6, carPos[2] + 2.5),
+      new THREE.Vector3(carPos[0] - 2.5, carPos[1] + 1.6, carPos[2] + 4),
+      new THREE.Vector3(carPos[0] + 5, carPos[1] + 1.6, carPos[2] - 1),
+    ];
+
+    const colliders = Array.isArray(world.colliders) ? world.colliders : [];
+
+    enemyAI = setupEnemyAI({
+      camera,
+      scene,
+      colliders,
+      ground: world.ground ?? null,
+      model: world.city ?? world.cityRoot ?? null,
+      spawnPoints: spawnNextToCar,
+      autoTrain: false,
+      modelScale: 1,
+    });
+
+    console.info("[EnemyAI] Adam Smasher setup complete (spawn next to car)");
+  }
 
   const cameraLayout = createCameraLayoutSync({
     camera,
@@ -253,6 +281,8 @@ async function init(loaderOverlay) {
         walkControls: cameraDirector.walkControls,
         enabled: appShell.isFinishedIntro?.() ?? false,
       });
+      // Keep Adam on the training-env pose every frame
+      enemyAI?.update(delta);
     },
   });
 
