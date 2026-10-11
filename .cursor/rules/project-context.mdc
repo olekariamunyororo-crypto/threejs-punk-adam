@@ -1,0 +1,13 @@
+---
+description: Threejs-Punk — always read AGENTS.md before editing
+alwaysApply: true
+---
+
+# Threejs-Punk (WebGPU + TSL)
+
+Before changing code, read **[AGENTS.md](../../AGENTS.md)** (constraints, file routing, recipes).
+
+- Stack: `three/webgpu`, `three/tsl`, Vite, no custom GLSL in `src/`.
+- Technique deep dives: [docs/techniques/](../../docs/techniques/README.md) (collision rain, wet ground, car droplets).
+- Human docs: [README.md](../../README.md). Feature stripping: [STRIP.md](../../STRIP.md).
+- Performance knobs: `src/platform/performanceProfile.js`. Code wins over docs.
