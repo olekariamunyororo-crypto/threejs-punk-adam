@@ -173,33 +173,38 @@ async function init(loaderOverlay) {
   });
 
   // -----------------------------------------------------------------------
-  // Adam Smasher — spawn next to the Quadra car
-  // Car world position: QUADRA_START.position ≈ [-128, -5.47, 33]
+  // Adam Smasher — spawn next to the Quadra car (never block scene load)
   // -----------------------------------------------------------------------
   let enemyAI = null;
   if (FEATURES.trainEnemies) {
-    const carPos = QUADRA_START.position;
-    // Offset a few meters beside the car (toward the player start / alley)
-    const spawnNextToCar = [
-      new THREE.Vector3(carPos[0] + 3.5, carPos[1] + 1.6, carPos[2] + 2.5),
-      new THREE.Vector3(carPos[0] - 2.5, carPos[1] + 1.6, carPos[2] + 4),
-      new THREE.Vector3(carPos[0] + 5, carPos[1] + 1.6, carPos[2] - 1),
-    ];
+    try {
+      const carPos = QUADRA_START.position;
+      const spawnNextToCar = [
+        new THREE.Vector3(carPos[0] + 3.5, carPos[1] + 1.6, carPos[2] + 2.5),
+        new THREE.Vector3(carPos[0] - 2.5, carPos[1] + 1.6, carPos[2] + 4),
+        new THREE.Vector3(carPos[0] + 5, carPos[1] + 1.6, carPos[2] - 1),
+      ];
 
-    const colliders = Array.isArray(world.colliders) ? world.colliders : [];
+      const colliders = Array.isArray(world.colliders) ? world.colliders : [];
+      // createGround returns { mesh, ... } — raycasts need the mesh Object3D
+      const groundMesh = world.ground?.mesh ?? null;
 
-    enemyAI = setupEnemyAI({
-      camera,
-      scene,
-      colliders,
-      ground: world.ground ?? null,
-      model: world.city ?? world.cityRoot ?? null,
-      spawnPoints: spawnNextToCar,
-      autoTrain: false,
-      modelScale: 1,
-    });
+      enemyAI = setupEnemyAI({
+        camera,
+        scene,
+        colliders,
+        ground: groundMesh,
+        model: world.city ?? null,
+        spawnPoints: spawnNextToCar,
+        autoTrain: false,
+        modelScale: 1,
+      });
 
-    console.info("[EnemyAI] Adam Smasher setup complete (spawn next to car)");
+      console.info("[EnemyAI] Adam Smasher setup complete (spawn next to car)");
+    } catch (err) {
+      console.warn("[EnemyAI] setup failed (scene continues without NPC):", err);
+      enemyAI = null;
+    }
   }
 
   const cameraLayout = createCameraLayoutSync({
@@ -281,8 +286,11 @@ async function init(loaderOverlay) {
         walkControls: cameraDirector.walkControls,
         enabled: appShell.isFinishedIntro?.() ?? false,
       });
-      // Keep Adam on the training-env pose every frame
-      enemyAI?.update(delta);
+      try {
+        enemyAI?.update(delta);
+      } catch {
+        /* ignore per-frame AI errors */
+      }
     },
   });
 
