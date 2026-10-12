@@ -384,7 +384,7 @@ export class EnemyTrainingEnv {
 
     const toPlayer = this._tmp.copy(this.camera.position).sub(this.enemy.position);
     const facing = new THREE.Vector3();
-    facing.set(-Math.sin(this.enemy.yaw), 0, -Math.cos(this.enemy.yaw));
+    facing.set(Math.sin(this.enemy.yaw), 0, -Math.cos(this.enemy.yaw));
 
     toPlayer.y = 0;
     toPlayer.normalize();

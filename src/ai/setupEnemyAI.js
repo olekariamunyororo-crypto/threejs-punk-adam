@@ -11,8 +11,12 @@
 import * as THREE from "three/webgpu";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { EnemyTrainingEnv } from "./EnemyTrainingEnv.js";
+import { createEnemyCombat } from "./enemyCombat.js"; // [combat]
 
-const ADAM_SMASHER_URL = "/models/adam_smasher_rigged.glb";
+const RESPAWN_AFTER_S = 8; // enemy comes back this long after dying
+const PLAYER_DAMAGE = 100; // one hit kills him
+
+const ADAM_SMASHER_URL = "/models/adam_smasher_rigged.glb?v=1791744626827";
 
 async function loadIgnitionAI() {
   const name = ["ignition", "ai"].join("");
@@ -40,7 +44,7 @@ function createEnemyBrain(env, {
     const dist = Math.hypot(dx, dz);
 
     // Desired facing toward player (yaw: 0 faces -Z)
-    const desiredYaw = Math.atan2(-dx, -dz);
+    const desiredYaw = Math.atan2(dx, -dz);
     let yawErr = desiredYaw - env.enemy.yaw;
     while (yawErr > Math.PI) yawErr -= Math.PI * 2;
     while (yawErr < -Math.PI) yawErr += Math.PI * 2;
@@ -54,7 +58,7 @@ function createEnemyBrain(env, {
 
     // Turn toward target when needed
     const TURN_THRESH = 0.25;
-    if (Math.abs(yawErr) > TURN_THRESH) {
+    if (state !== "patrol" && Math.abs(yawErr) > TURN_THRESH) { // patrol steers to its waypoint below
       return yawErr > 0 ? "turn_left" : "turn_right";
     }
 
@@ -90,7 +94,7 @@ function createEnemyBrain(env, {
       return "idle";
     }
 
-    const patrolYaw = Math.atan2(-pdx, -pdz);
+    const patrolYaw = Math.atan2(pdx, -pdz);
     let perr = patrolYaw - env.enemy.yaw;
     while (perr > Math.PI) perr -= Math.PI * 2;
     while (perr < -Math.PI) perr += Math.PI * 2;
@@ -122,6 +126,8 @@ export function setupEnemyAI({
   feetOffset = 0,
   gltfLoader = null,
   enableBrain = true,
+  onPlayerHit = () => {},
+  getPlayerSpeed = () => 0,
 } = {}) {
   const trainingEnv = new EnemyTrainingEnv({
     camera,
@@ -133,6 +139,15 @@ export function setupEnemyAI({
 
   trainingEnv.reset();
 
+  // Shots: env validates range / line of sight / aim; combat adds fire rate, tracer, sound and the hit roll.
+  const combat = createEnemyCombat({ scene, camera, getPlayerSpeed, onPlayerHit });
+  const tryShootOrig = trainingEnv._tryShoot.bind(trainingEnv);
+  trainingEnv._tryShoot = function () {
+    const ready = this.enemy.shootCooldown <= 0;
+    tryShootOrig();
+    if (ready && this._hitPlayerThisStep) combat.fire();
+  };
+
   const brain = enableBrain ? createEnemyBrain(trainingEnv) : null;
 
   let ignition = null;
@@ -143,6 +158,8 @@ export function setupEnemyAI({
   let loadPromise = null;
   let fallbackMesh = null;
   let boxHelper = null;
+  let deadFor = 0; // [anims]
+  let movingFor = 0; // brief turns must not interrupt walk/run
 
   // Model pivot often at feet or hips — we place root at feet on ground
   const eyeHeight = trainingEnv.settings.eyeHeight;
@@ -221,6 +238,7 @@ export function setupEnemyAI({
 
       if (scene) scene.add(root);
       enemyRoot = root;
+      combat.attach(root);
 
       if (fallbackMesh) fallbackMesh.visible = false;
 
@@ -258,8 +276,9 @@ export function setupEnemyAI({
     const pivotLift = enemyRoot.userData.pivotToFeet ?? 0;
 
     enemyRoot.position.set(pos.x, feetY + pivotLift, pos.z);
-    enemyRoot.rotation.y = yaw;
-    enemyRoot.visible = alive;
+    enemyRoot.rotation.y = Math.PI - yaw;
+    if (alive) deadFor = 0; else deadFor += delta;
+    enemyRoot.visible = alive || deadFor < 4; // keep body for the Die clip
 
     if (mixer) mixer.update(delta);
 
@@ -270,21 +289,28 @@ export function setupEnemyAI({
       trainingEnv._lastAction === "strafe_left" ||
       trainingEnv._lastAction === "strafe_right";
 
-    const walkClip =
-      actions.Walk ||
-      actions.walk ||
-      actions.Walking ||
-      actions.Run ||
-      actions.run ||
-      actions.locomotion;
-    const idleClip =
-      actions.Idle ||
-      actions.idle ||
-      actions.TPose ||
-      actions.Stand;
+    const A = (n) => actions[n] || actions[n.toLowerCase()];
+    const idleClip = A("Idle") || actions.TPose || actions.Stand;
+    const walkClip = A("Walk") || actions.Walking || A("Run") || actions.locomotion;
+    const runClip = A("Run") || walkClip;
+    const attackClip = A("Attack");
+    const dieClip = A("Die");
+    const state = ignition ? undefined : brain?.state;
 
-    if (moving && walkClip) playClip(walkClip);
-    else if (!moving && idleClip) playClip(idleClip);
+    movingFor = moving ? 0.25 : Math.max(0, movingFor - delta);
+    const moved = movingFor > 0;
+
+    let want = idleClip;
+    if (!alive) want = dieClip || idleClip;
+    else if (state === "attack" && attackClip) want = attackClip;
+    else if (moved) want = state === "chase" ? runClip : walkClip;
+    if (dieClip && want === dieClip) { dieClip.setLoop(THREE.LoopOnce, 1); dieClip.clampWhenFinished = true; }
+    if (want) playClip(want);
+    if (typeof document !== "undefined" && location.search.includes("dbg")) { // [dbg]
+      let el = document.getElementById("enemy-dbg");
+      if (!el) { el = document.createElement("div"); el.id = "enemy-dbg"; el.style.cssText = "position:fixed;left:8px;top:70px;z-index:99999;font:12px monospace;color:#0ff;background:#000a;padding:4px 6px;pointer-events:none"; document.body.appendChild(el); }
+      el.textContent = (state ?? "-") + " | clips:" + Object.keys(actions).filter((k) => k[0] === k[0].toUpperCase()).join(",") + " | now:" + (currentAction ? currentAction.getClip().name : "-") + " | act:" + trainingEnv._lastAction;
+    }
   }
 
   function ensureFallback(sceneRef) {
@@ -320,6 +346,8 @@ export function setupEnemyAI({
     if (ignition) return; // RL owns the actions when training/inferring
 
     const actionName = brain.pickAction(delta);
+    // match speed to the baked clips (walk ~1.8 m/s, run ~3.9 m/s)
+    trainingEnv.settings.moveSpeed = brain.state === "chase" ? 3.9 : 1.8;
     const idx = trainingEnv.actions.indexOf(actionName);
     trainingEnv.step(idx >= 0 ? idx : trainingEnv.actions.indexOf("idle"));
   }
@@ -371,10 +399,23 @@ export function setupEnemyAI({
     loadEnemyModel,
     startTraining,
     startInference,
-    update(delta = 1 / 60) {
-      tickBrain(delta);
+    update(delta = 1 / 60, enabled = true) {
+      if (enabled && enemyRoot) tickBrain(delta);
       syncEnemyVisual(delta);
       syncFallback();
+      combat.update(delta);
+      if (enemyRoot && !trainingEnv.isAlive() && deadFor > RESPAWN_AFTER_S) trainingEnv.reset();
+    },
+    /** Player bullet vs his bones: {distance, part, point} or null. */
+    shootRay(ray, maxDist) {
+      return enemyRoot && trainingEnv.isAlive() ? combat.shootRay(ray, maxDist) : null;
+    },
+    registerHit(hit) {
+      combat.spark(hit.point);
+      trainingEnv.applyDamage(PLAYER_DAMAGE);
+    },
+    respawn() {
+      trainingEnv.reset();
     },
     ensureFallback,
     applyDamage(amount) {

@@ -3,6 +3,7 @@ import * as THREE from "three/webgpu";
 import { createScene } from "./world/scene.js";
 import { createWorld, createLightingController } from "./world/createWorld.js";
 import { createViewmodel } from "./world/viewmodel/createViewmodel.js";
+import { playerState } from "./game/playerCombat.js"; // [combat]
 import { applyEnvironmentMap } from "./world/envMap.js";
 import { createPostProcessing } from "./post/postprocessing.js";
 import { createLoaderOverlay } from "./app/createLoaderOverlay.js";
@@ -168,7 +169,7 @@ async function init(loaderOverlay) {
     camera,
     renderer,
     world,
-    getFinishedIntro: () => appShell?.isFinishedIntro?.() ?? false,
+    getFinishedIntro: () => !playerState.dead && (appShell?.isFinishedIntro?.() ?? false), // dead = frozen
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
 
@@ -198,9 +199,18 @@ async function init(loaderOverlay) {
         spawnPoints: spawnNextToCar,
         autoTrain: false,
         modelScale: 1,
+        onPlayerHit: () => playerState.hit(100),
+        getPlayerSpeed: () => cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
       });
+      world.enemyAI = enemyAI;
+      playerState.onRespawn = () => {
+        cameraDirector.resetCameraPose();
+        world.viewmodel?.refill?.();
+        enemyAI?.respawn?.();
+      };
 
       console.info("[EnemyAI] Adam Smasher setup complete (spawn next to car)");
+      window.enemyAI = enemyAI; // [anims] console: enemyAI.applyDamage(100)
     } catch (err) {
       console.warn("[EnemyAI] setup failed (scene continues without NPC):", err);
       enemyAI = null;
@@ -284,10 +294,10 @@ async function init(loaderOverlay) {
       world.viewmodel?.update(delta, {
         camera,
         walkControls: cameraDirector.walkControls,
-        enabled: appShell.isFinishedIntro?.() ?? false,
+        enabled: (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
       });
       try {
-        enemyAI?.update(delta);
+        enemyAI?.update(delta, (appShell.isFinishedIntro?.() ?? false) && !playerState.dead);
       } catch {
         /* ignore per-frame AI errors */
       }

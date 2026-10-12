@@ -300,7 +300,7 @@ export async function createViewmodel({ scene, renderer, world }) {
 
   function fireRay(camera) {
     const targets = world?.focusTargets ?? [];
-    if (!targets.length) {
+    if (!targets.length && !world?.enemyAI) {
       return;
     }
     camera.updateMatrixWorld(true);
@@ -309,6 +309,11 @@ export async function createViewmodel({ scene, renderer, world }) {
 
     const hits = raycaster.intersectObjects(targets, true);
     const hit = hits[0];
+    const eHit = world?.enemyAI?.shootRay?.(raycaster.ray, p.maxRange); // [combat]
+    if (eHit && (!hit || eHit.distance < hit.distance)) {
+      world.enemyAI.registerHit(eHit);
+      return;
+    }
     if (!hit?.face) {
       return;
     }
@@ -521,6 +526,12 @@ export async function createViewmodel({ scene, renderer, world }) {
     state,
     update,
     reload: startReload,
+    refill() {
+      state.ammo = p.magSize;
+      state.reserve = p.reserve;
+      state.reloading = false;
+      syncHud();
+    },
     dispose,
   };
 
