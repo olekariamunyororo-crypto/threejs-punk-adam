@@ -1,18 +1,25 @@
 /**
- * Tiny procedural gun audio (no sample files): suppressed shot + mechanical click.
- * The AudioContext is created lazily on the first shot/click, which always
- * happens inside a user gesture.
+ * Player gun audio — loads /sounds/ak-74.mp3 and plays it on each shot.
+ * Falls back to a short procedural burst if the sample fails to load.
+ * AudioContext / Audio elements are only started after a user gesture (first shot).
  */
+
+const SHOT_URL = "/sounds/ak-74.mp3";
+const POOL_SIZE = 6; // overlapping shots while holding fire
+
 export function createGunAudio() {
   let ctx = null;
   let noiseBuffer = null;
+  /** @type {HTMLAudioElement[]} */
+  const pool = [];
+  let poolIndex = 0;
+  let sampleReady = false;
+  let loadStarted = false;
 
-  function ensure() {
+  function ensureCtx() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) {
-        return null;
-      }
+      if (!AC) return null;
       ctx = new AC();
       const length = Math.floor(ctx.sampleRate * 0.3);
       noiseBuffer = ctx.createBuffer(1, length, ctx.sampleRate);
@@ -27,11 +34,29 @@ export function createGunAudio() {
     return ctx;
   }
 
-  function shot() {
-    const c = ensure();
-    if (!c) {
-      return;
+  function ensureSample() {
+    if (loadStarted) return;
+    loadStarted = true;
+    for (let i = 0; i < POOL_SIZE; i += 1) {
+      const a = new Audio(SHOT_URL);
+      a.preload = "auto";
+      a.volume = 0.85;
+      pool.push(a);
     }
+    // Warm the first element so the first shot is less likely to hitch
+    pool[0].addEventListener(
+      "canplaythrough",
+      () => {
+        sampleReady = true;
+      },
+      { once: true },
+    );
+    pool[0].load();
+  }
+
+  function proceduralShot() {
+    const c = ensureCtx();
+    if (!c) return;
     const t = c.currentTime;
 
     const noise = c.createBufferSource();
@@ -59,11 +84,32 @@ export function createGunAudio() {
     osc.stop(t + 0.13);
   }
 
-  function click(delay = 0) {
-    const c = ensure();
-    if (!c) {
-      return;
+  function shot() {
+    ensureSample();
+    ensureCtx();
+
+    if (pool.length > 0) {
+      const a = pool[poolIndex % pool.length];
+      poolIndex += 1;
+      try {
+        a.currentTime = 0;
+        const p = a.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {
+            if (!sampleReady) proceduralShot();
+          });
+        }
+        return;
+      } catch {
+        /* fall through */
+      }
     }
+    proceduralShot();
+  }
+
+  function click(delay = 0) {
+    const c = ensureCtx();
+    if (!c) return;
     const t = c.currentTime + delay;
     const noise = c.createBufferSource();
     noise.buffer = noiseBuffer;
@@ -79,6 +125,11 @@ export function createGunAudio() {
   }
 
   function dispose() {
+    for (const a of pool) {
+      a.pause();
+      a.src = "";
+    }
+    pool.length = 0;
     ctx?.close?.();
     ctx = null;
   }
