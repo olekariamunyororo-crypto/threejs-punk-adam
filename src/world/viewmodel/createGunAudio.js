@@ -1,20 +1,21 @@
 /**
- * Player gun audio — plays /sounds/ak-74.mp3 on each shot.
- * Falls back to a short procedural burst if the sample is missing.
- * Audio starts only after a user gesture (first fire).
+ * Player gun audio — Web Audio buffer from /sounds/ak-74.mp3.
+ * More reliable than HTMLAudioElement on mobile / Termux browsers.
+ * Procedural fallback if the file is missing or decode fails.
  */
 
-const SHOT_URL = "/sounds/ak-74.mp3";
-const POOL_SIZE = 6; // overlapping shots while holding fire
+const SHOT_URLS = [
+  "/sounds/ak-74.mp3",
+  "/sounds/ak74-shot.mp3", // tiny legacy fallback in repo
+];
 
 export function createGunAudio() {
   let ctx = null;
   let noiseBuffer = null;
-  /** @type {HTMLAudioElement[]} */
-  const pool = [];
-  let poolIndex = 0;
-  let sampleReady = false;
-  let loadStarted = false;
+  /** @type {AudioBuffer | null} */
+  let shotBuffer = null;
+  let loadPromise = null;
+  let loadFailed = false;
 
   function ensureCtx() {
     if (!ctx) {
@@ -34,31 +35,61 @@ export function createGunAudio() {
     return ctx;
   }
 
-  function ensureSample() {
-    if (loadStarted) return;
-    loadStarted = true;
-    for (let i = 0; i < POOL_SIZE; i += 1) {
-      const a = new Audio(SHOT_URL);
-      a.preload = "auto";
-      a.volume = 0.85;
-      pool.push(a);
-    }
-    pool[0].addEventListener(
-      "canplaythrough",
-      () => {
-        sampleReady = true;
-        console.info("[GunAudio] ak-74.mp3 ready");
-      },
-      { once: true },
-    );
-    pool[0].addEventListener(
-      "error",
-      () => {
-        console.warn("[GunAudio] failed to load", SHOT_URL, "— using procedural");
-      },
-      { once: true },
-    );
-    pool[0].load();
+  async function loadShotBuffer() {
+    if (shotBuffer || loadFailed) return shotBuffer;
+    if (loadPromise) return loadPromise;
+
+    loadPromise = (async () => {
+      const c = ensureCtx();
+      if (!c) {
+        loadFailed = true;
+        return null;
+      }
+
+      for (const url of SHOT_URLS) {
+        try {
+          const res = await fetch(url, { cache: "force-cache" });
+          if (!res.ok) {
+            console.warn("[GunAudio] HTTP", res.status, url);
+            continue;
+          }
+          const arr = await res.arrayBuffer();
+          shotBuffer = await c.decodeAudioData(arr.slice(0));
+          console.info(
+            "[GunAudio] loaded",
+            url,
+            `${shotBuffer.duration.toFixed(2)}s`,
+          );
+          return shotBuffer;
+        } catch (err) {
+          console.warn("[GunAudio] decode failed", url, err?.message || err);
+        }
+      }
+
+      loadFailed = true;
+      console.warn("[GunAudio] no sample — procedural only");
+      return null;
+    })();
+
+    return loadPromise;
+  }
+
+  // Kick off fetch early (decode still needs a live AudioContext)
+  if (typeof window !== "undefined") {
+    // Don't create AudioContext until gesture; just warm the HTTP cache
+    fetch(SHOT_URLS[0], { cache: "force-cache" }).catch(() => {});
+  }
+
+  function playBuffer(buffer, volume = 1) {
+    const c = ensureCtx();
+    if (!c || !buffer) return false;
+    const src = c.createBufferSource();
+    src.buffer = buffer;
+    const g = c.createGain();
+    g.gain.value = volume;
+    src.connect(g).connect(c.destination);
+    src.start(0);
+    return true;
   }
 
   function proceduralShot() {
@@ -73,7 +104,7 @@ export function createGunAudio() {
     lp.frequency.setValueAtTime(2400, t);
     lp.frequency.exponentialRampToValueAtTime(500, t + 0.14);
     const ng = c.createGain();
-    ng.gain.setValueAtTime(0.5, t);
+    ng.gain.setValueAtTime(0.55, t);
     ng.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
     noise.connect(lp).connect(ng).connect(c.destination);
     noise.start(t);
@@ -84,7 +115,7 @@ export function createGunAudio() {
     osc.frequency.setValueAtTime(130, t);
     osc.frequency.exponentialRampToValueAtTime(45, t + 0.09);
     const og = c.createGain();
-    og.gain.setValueAtTime(0.55, t);
+    og.gain.setValueAtTime(0.6, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
     osc.connect(og).connect(c.destination);
     osc.start(t);
@@ -92,26 +123,21 @@ export function createGunAudio() {
   }
 
   function shot() {
-    ensureSample();
     ensureCtx();
 
-    if (pool.length > 0) {
-      const a = pool[poolIndex % pool.length];
-      poolIndex += 1;
-      try {
-        a.currentTime = 0;
-        const p = a.play();
-        if (p && typeof p.catch === "function") {
-          p.catch(() => {
-            if (!sampleReady) proceduralShot();
-          });
-        }
-        return;
-      } catch {
-        /* fall through */
-      }
+    if (shotBuffer) {
+      playBuffer(shotBuffer, 1.0);
+      return;
     }
-    proceduralShot();
+
+    // First shots may arrive before decode finishes
+    loadShotBuffer().then((buf) => {
+      if (buf) playBuffer(buf, 1.0);
+      else proceduralShot();
+    });
+
+    // Immediate feedback if still loading
+    if (!shotBuffer) proceduralShot();
   }
 
   function click(delay = 0) {
@@ -132,14 +158,11 @@ export function createGunAudio() {
   }
 
   function dispose() {
-    for (const a of pool) {
-      a.pause();
-      a.src = "";
-    }
-    pool.length = 0;
+    shotBuffer = null;
+    loadPromise = null;
     ctx?.close?.();
     ctx = null;
   }
 
-  return { shot, click, dispose };
+  return { shot, click, dispose, preload: loadShotBuffer };
 }
