@@ -48,7 +48,8 @@ import {
   LOOK_PRESETS,
 } from "./post/look/cyberpunkLook.js";
 import { FEATURES } from "./world/features.js";
-import { setupEnemySquad } from "./ai/setupEnemySquad.js";
+import { setupEnemyAI } from "./ai/setupEnemyAI.js";
+import { QUADRA_START } from "./world/car/loadCar.js";
 
 const loader = createLoaderOverlay();
 
@@ -171,22 +172,29 @@ async function init(loaderOverlay) {
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
 
-  // 3 NPCs only — loads after a short delay so intro never stalls
+  // Single Adam Smasher next to the Quadra (never blocks scene load)
   let enemyAI = null;
   if (FEATURES.trainEnemies) {
     try {
+      const carPos = QUADRA_START.position;
+      const spawnNextToCar = [
+        new THREE.Vector3(carPos[0] + 3.5, carPos[1] + 1.6, carPos[2] + 2.5),
+        new THREE.Vector3(carPos[0] - 2.5, carPos[1] + 1.6, carPos[2] + 4),
+        new THREE.Vector3(carPos[0] + 5, carPos[1] + 1.6, carPos[2] - 1),
+      ];
+
       const colliders = Array.isArray(world.colliders) ? world.colliders : [];
       const groundMesh = world.ground?.mesh ?? null;
 
-      enemyAI = setupEnemySquad({
+      enemyAI = setupEnemyAI({
         camera,
         scene,
         colliders,
         ground: groundMesh,
         model: world.city ?? null,
-        count: 3,
+        spawnPoints: spawnNextToCar,
+        autoTrain: false,
         modelScale: 1,
-        startDelayMs: 2500,
         onPlayerHit: () => playerState.hit(100),
         getPlayerSpeed: () =>
           cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
@@ -197,10 +205,11 @@ async function init(loaderOverlay) {
         world.viewmodel?.refill?.();
         enemyAI?.respawn?.();
       };
+
+      console.info("[EnemyAI] Adam Smasher setup complete (single NPC)");
       window.enemyAI = enemyAI;
-      console.info("[EnemySquad] will spawn 3 agents after delay");
     } catch (err) {
-      console.warn("[EnemySquad] setup failed (scene continues):", err);
+      console.warn("[EnemyAI] setup failed (scene continues without NPC):", err);
       enemyAI = null;
     }
   }
@@ -290,7 +299,7 @@ async function init(loaderOverlay) {
           (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
         );
       } catch {
-        /* ignore */
+        /* ignore per-frame AI errors */
       }
     },
   });
