@@ -58,7 +58,6 @@ init(loader).catch((error) => {
 });
 
 async function init(loaderOverlay) {
-  // Must run before createRenderer so the initial setPixelRatio sees iOS caps.
   applyDevicePerformanceDefaults();
   syncLayoutClass();
 
@@ -90,7 +89,6 @@ async function init(loaderOverlay) {
     requestShadowMapUpdate,
   });
 
-  // First-person arms + rifle (non-fatal if the model fails to load).
   loaderOverlay.setStatus("ARMING");
   try {
     world.viewmodel = await createViewmodel({ scene, renderer, world });
@@ -168,26 +166,25 @@ async function init(loaderOverlay) {
     camera,
     renderer,
     world,
-    getFinishedIntro: () => !playerState.dead && (appShell?.isFinishedIntro?.() ?? false),
+    getFinishedIntro: () =>
+      !playerState.dead && (appShell?.isFinishedIntro?.() ?? false),
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
 
-  // -----------------------------------------------------------------------
-  // Squad of 6 Adam Smashers — attack from around the alley
-  // -----------------------------------------------------------------------
+  // Squad loads in background — never await (avoids black screen)
   let enemyAI = null;
   if (FEATURES.trainEnemies) {
     try {
       const colliders = Array.isArray(world.colliders) ? world.colliders : [];
       const groundMesh = world.ground?.mesh ?? null;
 
-      enemyAI = await setupEnemySquad({
+      enemyAI = setupEnemySquad({
         camera,
         scene,
         colliders,
         ground: groundMesh,
         model: world.city ?? null,
-        count: 6, // original + 5 more
+        count: 6,
         modelScale: 1,
         onPlayerHit: () => playerState.hit(100),
         getPlayerSpeed: () =>
@@ -199,11 +196,8 @@ async function init(loaderOverlay) {
         world.viewmodel?.refill?.();
         enemyAI?.respawn?.();
       };
-
-      console.info(
-        `[EnemySquad] ${enemyAI.length} Adam Smashers ready (all directions)`,
-      );
       window.enemyAI = enemyAI;
+      console.info("[EnemySquad] spawning in background…");
     } catch (err) {
       console.warn("[EnemySquad] setup failed (scene continues):", err);
       enemyAI = null;
