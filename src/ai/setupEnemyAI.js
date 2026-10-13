@@ -1,20 +1,20 @@
 /**
  * Adam Smasher enemy NPC + simple patrol / chase / attack AI.
  *
- * - Loads /models/adam_smasher_rigged.glb (or clones preloadedGltf)
- * - Feet snapped to ground
- * - Brain: patrol → chase → attack
- * - Idle / Walk / Run / Attack / Die clips
+ * - Loads /models/adam_smasher_rigged.glb
+ * - Feet snapped to ground (no floating)
+ * - Autonomous brain: patrol → chase player → face & attack
+ * - Idle / Walk animation cross-fade when clips exist
+ * - IgnitionAI optional (not required for movement)
  */
 
 import * as THREE from "three/webgpu";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { SkeletonUtils } from "three/addons/utils/SkeletonUtils.js";
 import { EnemyTrainingEnv } from "./EnemyTrainingEnv.js";
-import { createEnemyCombat } from "./enemyCombat.js";
+import { createEnemyCombat } from "./enemyCombat.js"; // [combat]
 
-const RESPAWN_AFTER_S = 8;
-const PLAYER_DAMAGE = 100;
+const RESPAWN_AFTER_S = 8; // enemy comes back this long after dying
+const PLAYER_DAMAGE = 100; // one hit kills him
 
 const ADAM_SMASHER_URL = "/models/adam_smasher_rigged.glb?v=1791744626827";
 
@@ -23,10 +23,15 @@ async function loadIgnitionAI() {
   return import(/* @vite-ignore */ name);
 }
 
-function createEnemyBrain(
-  env,
-  { chaseRange = 28, attackRange = 14, loseRange = 40 } = {},
-) {
+/**
+ * Simple finite-state brain (no RL package needed).
+ * States: patrol | chase | attack
+ */
+function createEnemyBrain(env, {
+  chaseRange = 22,
+  attackRange = 12,
+  loseRange = 32,
+} = {}) {
   let state = "patrol";
   let patrolIndex = 0;
   let repathTimer = 0;
@@ -66,7 +71,9 @@ function createEnemyBrain(
       return "idle";
     }
 
-    if (state === "chase") return "forward";
+    if (state === "chase") {
+      return "forward";
+    }
 
     const points = env.spawnPoints;
     if (!points.length) return "forward";
@@ -114,10 +121,6 @@ export function setupEnemyAI({
   enableBrain = true,
   onPlayerHit = () => {},
   getPlayerSpeed = () => 0,
-  /** Shared glTF from squad loader — clone instead of re-fetching */
-  preloadedGltf = null,
-  instanceName = "AdamSmasher_Enemy",
-  brainDelay = 0,
 } = {}) {
   const trainingEnv = new EnemyTrainingEnv({
     camera,
@@ -129,12 +132,7 @@ export function setupEnemyAI({
 
   trainingEnv.reset();
 
-  const combat = createEnemyCombat({
-    scene,
-    camera,
-    getPlayerSpeed,
-    onPlayerHit,
-  });
+  const combat = createEnemyCombat({ scene, camera, getPlayerSpeed, onPlayerHit });
   const tryShootOrig = trainingEnv._tryShoot.bind(trainingEnv);
   trainingEnv._tryShoot = function () {
     const ready = this.enemy.shootCooldown <= 0;
@@ -153,85 +151,93 @@ export function setupEnemyAI({
   let fallbackMesh = null;
   let deadFor = 0;
   let movingFor = 0;
-  let brainWarmup = brainDelay;
 
   const eyeHeight = trainingEnv.settings.eyeHeight;
-
-  function configureRoot(root, gltfAnims) {
-    root.name = instanceName;
-    root.scale.setScalar(modelScale);
-
-    root.updateMatrixWorld(true);
-    const bbox = new THREE.Box3().setFromObject(root);
-    const size = new THREE.Vector3();
-    bbox.getSize(size);
-    const minY = bbox.min.y;
-    root.userData.pivotToFeet = -minY * modelScale;
-    root.userData.modelHeight = size.y * modelScale;
-
-    root.traverse((child) => {
-      if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-        child.frustumCulled = true;
-      }
-    });
-
-    if (gltfAnims?.length > 0) {
-      mixer = new THREE.AnimationMixer(root);
-      actions = {};
-      for (const clip of gltfAnims) {
-        const name = clip.name || `clip_${Object.keys(actions).length}`;
-        const action = mixer.clipAction(clip);
-        action.enabled = true;
-        actions[name] = action;
-        actions[name.toLowerCase()] = action;
-      }
-      const preferred =
-        actions.Idle ||
-        actions.idle ||
-        actions.TPose ||
-        actions[Object.keys(actions)[0]];
-      if (preferred) {
-        preferred.reset().play();
-        currentAction = preferred;
-      }
-    }
-
-    if (scene) scene.add(root);
-    enemyRoot = root;
-    combat.attach(root);
-    if (fallbackMesh) fallbackMesh.visible = false;
-    syncEnemyVisual(0);
-  }
 
   async function loadEnemyModel() {
     if (enemyRoot) return enemyRoot;
     if (loadPromise) return loadPromise;
 
     loadPromise = (async () => {
-      let gltf = preloadedGltf;
-      if (!gltf) {
-        const loader = gltfLoader ?? new GLTFLoader();
-        gltf = await new Promise((resolve, reject) => {
-          loader.load(
-            ADAM_SMASHER_URL,
-            resolve,
-            undefined,
-            (err) => reject(err ?? new Error("Failed to load Adam Smasher")),
-          );
-        });
+      const loader = gltfLoader ?? new GLTFLoader();
+      const gltf = await new Promise((resolve, reject) => {
+        loader.load(
+          ADAM_SMASHER_URL,
+          resolve,
+          undefined,
+          (err) => reject(err ?? new Error("Failed to load Adam Smasher")),
+        );
+      });
+
+      const root = gltf.scene;
+      root.name = "AdamSmasher_Enemy";
+      root.scale.setScalar(modelScale);
+
+      root.updateMatrixWorld(true);
+      const bbox = new THREE.Box3().setFromObject(root);
+      const size = new THREE.Vector3();
+      bbox.getSize(size);
+      const minY = bbox.min.y;
+
+      root.userData.pivotToFeet = -minY * modelScale;
+      root.userData.modelHeight = size.y * modelScale;
+
+      console.info(
+        "[EnemyAI] model size",
+        size.x.toFixed(2),
+        size.y.toFixed(2),
+        size.z.toFixed(2),
+        "pivotToFeet",
+        root.userData.pivotToFeet.toFixed(2),
+      );
+
+      root.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          child.frustumCulled = true;
+        }
+      });
+
+      if (gltf.animations?.length > 0) {
+        mixer = new THREE.AnimationMixer(root);
+        for (const clip of gltf.animations) {
+          const name = clip.name || `clip_${Object.keys(actions).length}`;
+          const action = mixer.clipAction(clip);
+          action.enabled = true;
+          actions[name] = action;
+          actions[name.toLowerCase()] = action;
+        }
+        console.info(
+          "[EnemyAI] animations:",
+          Object.keys(actions).filter((k, i, a) => a.indexOf(k) === i),
+        );
+
+        const preferred =
+          actions.Idle ||
+          actions.idle ||
+          actions.TPose ||
+          actions[Object.keys(actions)[0]];
+        if (preferred) {
+          preferred.reset().play();
+          currentAction = preferred;
+        }
+      } else {
+        console.info("[EnemyAI] no animations in GLB — static mesh");
       }
 
-      // Clone skinned mesh graph so each agent has independent pose/anims
-      const root = preloadedGltf
-        ? SkeletonUtils.clone(gltf.scene)
-        : gltf.scene;
+      if (scene) scene.add(root);
+      enemyRoot = root;
+      combat.attach(root);
 
-      configureRoot(root, gltf.animations);
+      if (fallbackMesh) fallbackMesh.visible = false;
+
+      syncEnemyVisual(0);
       console.info(
-        `[EnemyAI] ${instanceName} at`,
+        "[EnemyAI] spawned at",
         trainingEnv.getEnemyPosition().toArray().map((n) => +n.toFixed(2)),
+        "brain",
+        brain?.state,
       );
       return root;
     })();
@@ -241,7 +247,9 @@ export function setupEnemyAI({
 
   function playClip(next) {
     if (!next || currentAction === next) return;
-    if (currentAction) currentAction.fadeOut(0.2);
+    if (currentAction) {
+      currentAction.fadeOut(0.2);
+    }
     next.reset().setEffectiveWeight(1).fadeIn(0.2).play();
     currentAction = next;
   }
@@ -301,7 +309,7 @@ export function setupEnemyAI({
       opacity: 0.85,
     });
     fallbackMesh = new THREE.Mesh(geo, mat);
-    fallbackMesh.name = `${instanceName}_Fallback`;
+    fallbackMesh.name = "EnemyAI_Fallback";
     sceneRef.add(fallbackMesh);
     syncFallback();
     return fallbackMesh;
@@ -322,10 +330,6 @@ export function setupEnemyAI({
   function tickBrain(delta) {
     if (!brain || !trainingEnv.isAlive()) return;
     if (ignition) return;
-    if (brainWarmup > 0) {
-      brainWarmup -= delta;
-      return;
-    }
 
     const actionName = brain.pickAction(delta);
     trainingEnv.settings.moveSpeed = brain.state === "chase" ? 3.9 : 1.8;
@@ -340,9 +344,10 @@ export function setupEnemyAI({
       ignition = new IgnitionEnvTFJS(trainingEnv);
       ignition.setSpeed?.(20);
       ignition.train(algorithm);
+      console.info(`[EnemyAI] Training started (${algorithm})`);
       return ignition;
     } catch (err) {
-      console.warn("[EnemyAI] ignitionai optional", err?.message);
+      console.warn("[EnemyAI] ignitionai optional — using built-in brain", err?.message);
       return null;
     }
   }
@@ -362,7 +367,7 @@ export function setupEnemyAI({
   if (scene) ensureFallback(scene);
 
   loadEnemyModel().catch((err) => {
-    console.error(`[EnemyAI] Failed to load ${instanceName}:`, err);
+    console.error("[EnemyAI] Failed to load Adam Smasher:", err);
   });
 
   if (autoTrain) startTraining("dqn");
