@@ -171,7 +171,7 @@ async function init(loaderOverlay) {
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
 
-  // Squad loads in background — never await (avoids black screen)
+  // 3 NPCs only — loads after a short delay so intro never stalls
   let enemyAI = null;
   if (FEATURES.trainEnemies) {
     try {
@@ -184,8 +184,9 @@ async function init(loaderOverlay) {
         colliders,
         ground: groundMesh,
         model: world.city ?? null,
-        count: 6,
+        count: 3,
         modelScale: 1,
+        startDelayMs: 2500,
         onPlayerHit: () => playerState.hit(100),
         getPlayerSpeed: () =>
           cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
@@ -197,7 +198,7 @@ async function init(loaderOverlay) {
         enemyAI?.respawn?.();
       };
       window.enemyAI = enemyAI;
-      console.info("[EnemySquad] spawning in background…");
+      console.info("[EnemySquad] will spawn 3 agents after delay");
     } catch (err) {
       console.warn("[EnemySquad] setup failed (scene continues):", err);
       enemyAI = null;
@@ -289,7 +290,7 @@ async function init(loaderOverlay) {
           (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
         );
       } catch {
-        /* ignore per-frame AI errors */
+        /* ignore */
       }
     },
   });

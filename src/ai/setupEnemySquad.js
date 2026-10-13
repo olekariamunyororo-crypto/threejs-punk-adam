@@ -1,8 +1,6 @@
 /**
  * Multiple Adam Smasher NPCs — attack from around the alley.
- *
- * Non-blocking: returns a squad API immediately; GLB loads in the background.
- * Until agents are ready, update/shootRay are no-ops.
+ * Non-blocking; delayed start; clones one agent at a time.
  */
 
 import * as THREE from "three/webgpu";
@@ -28,17 +26,19 @@ export function buildAlleySpawnHomes() {
   ];
 }
 
-/**
- * Synchronous setup — scene keeps loading while Adam GLB downloads.
- */
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export function setupEnemySquad({
   camera,
   scene,
   colliders = [],
   ground = null,
   model = null,
-  count = 6,
+  count = 3,
   modelScale = 1,
+  startDelayMs = 2000,
   onPlayerHit = () => {},
   getPlayerSpeed = () => 0,
   gltfLoader = null,
@@ -57,16 +57,26 @@ export function setupEnemySquad({
       return ready;
     },
     update(delta = 1 / 60, enabled = true) {
-      for (const a of agents) a.update(delta, enabled);
+      for (const a of agents) {
+        try {
+          a.update(delta, enabled);
+        } catch {
+          /* skip broken agent */
+        }
+      }
     },
     shootRay(ray, maxDist = 150) {
       let best = null;
       let bestAgent = null;
       for (const a of agents) {
-        const h = a.shootRay(ray, maxDist);
-        if (h && (!best || h.distance < best.distance)) {
-          best = h;
-          bestAgent = a;
+        try {
+          const h = a.shootRay(ray, maxDist);
+          if (h && (!best || h.distance < best.distance)) {
+            best = h;
+            bestAgent = a;
+          }
+        } catch {
+          /* skip */
         }
       }
       if (best && bestAgent) best._agent = bestAgent;
@@ -103,9 +113,10 @@ export function setupEnemySquad({
     },
   };
 
-  // Background load — never blocks the render loop / intro
   (async () => {
     try {
+      if (startDelayMs > 0) await delay(startDelayMs);
+
       const loader = gltfLoader ?? new GLTFLoader();
       const gltf = await new Promise((resolve, reject) => {
         loader.load(
@@ -117,53 +128,56 @@ export function setupEnemySquad({
       });
 
       console.info(
-        `[EnemySquad] loaded Adam once → cloning ${homes.length} agents`,
+        `[EnemySquad] loaded Adam → spawning ${homes.length} agents`,
       );
 
       for (let i = 0; i < homes.length; i += 1) {
-        const home = homes[i];
-        const patrol = [
-          home.clone(),
-          home.clone().add(new THREE.Vector3(3.5, 0, 1.5)),
-          home.clone().add(new THREE.Vector3(-2.5, 0, 3)),
-          home.clone().add(new THREE.Vector3(1, 0, -3.5)),
-        ];
+        try {
+          const home = homes[i];
+          const patrol = [
+            home.clone(),
+            home.clone().add(new THREE.Vector3(3.5, 0, 1.5)),
+            home.clone().add(new THREE.Vector3(-2.5, 0, 3)),
+          ];
 
-        const agent = setupEnemyAI({
-          camera,
-          scene,
-          colliders,
-          ground,
-          model,
-          spawnPoints: patrol,
-          autoTrain: false,
-          modelScale,
-          enableBrain: true,
-          onPlayerHit,
-          getPlayerSpeed,
-          preloadedGltf: gltf,
-          instanceName: `AdamSmasher_Enemy_${i}`,
-          brainDelay: i * 0.35,
-        });
+          const agent = setupEnemyAI({
+            camera,
+            scene,
+            colliders,
+            ground,
+            model,
+            spawnPoints: patrol,
+            autoTrain: false,
+            modelScale,
+            enableBrain: true,
+            onPlayerHit,
+            getPlayerSpeed,
+            preloadedGltf: gltf,
+            instanceName: `AdamSmasher_Enemy_${i}`,
+            brainDelay: i * 0.5,
+          });
 
-        agent.env.enemy.position.copy(home);
-        agent.env.enemy.yaw = Math.random() * Math.PI * 2;
-        agent.env.lastDistance = home.distanceTo(camera.position);
-        const homeCopy = home.clone();
-        agent.respawn = () => {
-          agent.env.reset();
-          agent.env.enemy.position.copy(homeCopy);
-          agent.env.enemy.health = 100;
-          agent.env.enemy.alive = true;
-        };
+          agent.env.enemy.position.copy(home);
+          agent.env.enemy.yaw = Math.random() * Math.PI * 2;
+          agent.env.lastDistance = home.distanceTo(camera.position);
+          const homeCopy = home.clone();
+          agent.respawn = () => {
+            agent.env.reset();
+            agent.env.enemy.position.copy(homeCopy);
+            agent.env.enemy.health = 100;
+            agent.env.enemy.alive = true;
+          };
 
-        agents.push(agent);
+          agents.push(agent);
+          // Yield so the browser can paint between clones
+          await delay(80);
+        } catch (agentErr) {
+          console.warn(`[EnemySquad] agent ${i} failed:`, agentErr);
+        }
       }
 
-      ready = true;
-      console.info(
-        `[EnemySquad] ${agents.length} Adam Smashers ready (all directions)`,
-      );
+      ready = agents.length > 0;
+      console.info(`[EnemySquad] ${agents.length} ready`);
     } catch (err) {
       console.warn("[EnemySquad] background load failed:", err);
     }
