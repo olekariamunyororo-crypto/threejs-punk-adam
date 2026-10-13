@@ -48,8 +48,7 @@ import {
   LOOK_PRESETS,
 } from "./post/look/cyberpunkLook.js";
 import { FEATURES } from "./world/features.js";
-import { setupEnemyAI } from "./ai/setupEnemyAI.js";
-import { QUADRA_START } from "./world/car/loadCar.js";
+import { setupEnemyPair } from "./ai/setupEnemyPair.js";
 
 const loader = createLoaderOverlay();
 
@@ -172,28 +171,19 @@ async function init(loaderOverlay) {
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
 
-  // Single Adam Smasher next to the Quadra (never blocks scene load)
+  // 2 Adams: #1 now, #2 after ~4s (never blocks boot)
   let enemyAI = null;
   if (FEATURES.trainEnemies) {
     try {
-      const carPos = QUADRA_START.position;
-      const spawnNextToCar = [
-        new THREE.Vector3(carPos[0] + 3.5, carPos[1] + 1.6, carPos[2] + 2.5),
-        new THREE.Vector3(carPos[0] - 2.5, carPos[1] + 1.6, carPos[2] + 4),
-        new THREE.Vector3(carPos[0] + 5, carPos[1] + 1.6, carPos[2] - 1),
-      ];
-
       const colliders = Array.isArray(world.colliders) ? world.colliders : [];
       const groundMesh = world.ground?.mesh ?? null;
 
-      enemyAI = setupEnemyAI({
+      enemyAI = setupEnemyPair({
         camera,
         scene,
         colliders,
         ground: groundMesh,
         model: world.city ?? null,
-        spawnPoints: spawnNextToCar,
-        autoTrain: false,
         modelScale: 1,
         onPlayerHit: () => playerState.hit(100),
         getPlayerSpeed: () =>
@@ -205,11 +195,10 @@ async function init(loaderOverlay) {
         world.viewmodel?.refill?.();
         enemyAI?.respawn?.();
       };
-
-      console.info("[EnemyAI] Adam Smasher setup complete (single NPC)");
       window.enemyAI = enemyAI;
+      console.info("[EnemyPair] 2 NPCs (2nd delayed)");
     } catch (err) {
-      console.warn("[EnemyAI] setup failed (scene continues without NPC):", err);
+      console.warn("[EnemyPair] setup failed:", err);
       enemyAI = null;
     }
   }
@@ -299,7 +288,7 @@ async function init(loaderOverlay) {
           (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
         );
       } catch {
-        /* ignore per-frame AI errors */
+        /* ignore */
       }
     },
   });
