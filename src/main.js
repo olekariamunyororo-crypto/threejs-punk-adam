@@ -48,8 +48,7 @@ import {
   LOOK_PRESETS,
 } from "./post/look/cyberpunkLook.js";
 import { FEATURES } from "./world/features.js";
-import { setupEnemyAI } from "./ai/setupEnemyAI.js";
-import { QUADRA_START } from "./world/car/loadCar.js";
+import { setupEnemySquad } from "./ai/setupEnemySquad.js";
 
 const loader = createLoaderOverlay();
 
@@ -169,38 +168,30 @@ async function init(loaderOverlay) {
     camera,
     renderer,
     world,
-    getFinishedIntro: () => !playerState.dead && (appShell?.isFinishedIntro?.() ?? false), // dead = frozen
+    getFinishedIntro: () => !playerState.dead && (appShell?.isFinishedIntro?.() ?? false),
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
 
   // -----------------------------------------------------------------------
-  // Adam Smasher — spawn next to the Quadra car (never block scene load)
+  // Squad of 6 Adam Smashers — attack from around the alley
   // -----------------------------------------------------------------------
   let enemyAI = null;
   if (FEATURES.trainEnemies) {
     try {
-      const carPos = QUADRA_START.position;
-      const spawnNextToCar = [
-        new THREE.Vector3(carPos[0] + 3.5, carPos[1] + 1.6, carPos[2] + 2.5),
-        new THREE.Vector3(carPos[0] - 2.5, carPos[1] + 1.6, carPos[2] + 4),
-        new THREE.Vector3(carPos[0] + 5, carPos[1] + 1.6, carPos[2] - 1),
-      ];
-
       const colliders = Array.isArray(world.colliders) ? world.colliders : [];
-      // createGround returns { mesh, ... } — raycasts need the mesh Object3D
       const groundMesh = world.ground?.mesh ?? null;
 
-      enemyAI = setupEnemyAI({
+      enemyAI = await setupEnemySquad({
         camera,
         scene,
         colliders,
         ground: groundMesh,
         model: world.city ?? null,
-        spawnPoints: spawnNextToCar,
-        autoTrain: false,
+        count: 6, // original + 5 more
         modelScale: 1,
         onPlayerHit: () => playerState.hit(100),
-        getPlayerSpeed: () => cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
+        getPlayerSpeed: () =>
+          cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
       });
       world.enemyAI = enemyAI;
       playerState.onRespawn = () => {
@@ -209,10 +200,12 @@ async function init(loaderOverlay) {
         enemyAI?.respawn?.();
       };
 
-      console.info("[EnemyAI] Adam Smasher setup complete (spawn next to car)");
-      window.enemyAI = enemyAI; // [anims] console: enemyAI.applyDamage(100)
+      console.info(
+        `[EnemySquad] ${enemyAI.length} Adam Smashers ready (all directions)`,
+      );
+      window.enemyAI = enemyAI;
     } catch (err) {
-      console.warn("[EnemyAI] setup failed (scene continues without NPC):", err);
+      console.warn("[EnemySquad] setup failed (scene continues):", err);
       enemyAI = null;
     }
   }
@@ -297,7 +290,10 @@ async function init(loaderOverlay) {
         enabled: (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
       });
       try {
-        enemyAI?.update(delta, (appShell.isFinishedIntro?.() ?? false) && !playerState.dead);
+        enemyAI?.update(
+          delta,
+          (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
+        );
       } catch {
         /* ignore per-frame AI errors */
       }
@@ -350,7 +346,6 @@ async function init(loaderOverlay) {
     await deferredCompile;
   }
 
-  // Inspector attaches only via Development Mode (never on load).
   inspectorSession.bootstrapInspector(appShell.settingsPanel);
 
   if (isDevelopmentModeEnabled()) {
