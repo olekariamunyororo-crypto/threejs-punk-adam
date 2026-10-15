@@ -4,6 +4,8 @@ import { createScene } from "./world/scene.js";
 import { createWorld, createLightingController } from "./world/createWorld.js";
 import { createViewmodel } from "./world/viewmodel/createViewmodel.js";
 import { playerState } from "./game/playerCombat.js"; // [combat]
+import { createHovercar } from "./game/hovercar.js"; // [hovercar]
+import { vehicleState } from "./game/vehicleState.js";
 import { applyEnvironmentMap } from "./world/envMap.js";
 import { createPostProcessing } from "./post/postprocessing.js";
 import { createLoaderOverlay } from "./app/createLoaderOverlay.js";
@@ -48,6 +50,7 @@ import {
   LOOK_PRESETS,
 } from "./post/look/cyberpunkLook.js";
 import { FEATURES } from "./world/features.js";
+import { installGpuWatch } from "./debug/gpuWatch.js"; // [gpu]
 import { setupEnemyPair } from "./ai/setupEnemyPair.js";
 
 const loader = createLoaderOverlay();
@@ -72,6 +75,7 @@ async function init(loaderOverlay) {
   loaderOverlay.setStatus("SPINNING UP RENDERER");
 
   const { renderer } = await createRenderer();
+  installGpuWatch(renderer); // [gpu]
 
   loaderOverlay.setProgress(0.2);
   loaderOverlay.setStatus("LINKING WEBGPU");
@@ -167,9 +171,13 @@ async function init(loaderOverlay) {
     renderer,
     world,
     getFinishedIntro: () =>
-      !playerState.dead && (appShell?.isFinishedIntro?.() ?? false),
+      !playerState.dead &&
+      !vehicleState.driving &&
+      (appShell?.isFinishedIntro?.() ?? false),
     onWalkModeChange: (walk) => walkModeBridge.onChange?.(walk),
   });
+
+  let hovercar = null;
 
   // 2 Adams: #1 now, #2 after ~4s (never blocks boot)
   let enemyAI = null;
@@ -185,12 +193,20 @@ async function init(loaderOverlay) {
         ground: groundMesh,
         model: world.city ?? null,
         modelScale: 1,
-        onPlayerHit: () => playerState.hit(100),
+        onPlayerHit: () => {
+          // [roadkill] bulletproof hovercar: shots just spark on the hull
+          if (vehicleState.driving) {
+            hovercar?.bulletImpact?.();
+            return;
+          }
+          playerState.hit(100);
+        },
         getPlayerSpeed: () =>
           cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
       });
       world.enemyAI = enemyAI;
       playerState.onRespawn = () => {
+        hovercar?.reset?.();
         cameraDirector.resetCameraPose();
         world.viewmodel?.refill?.();
         enemyAI?.respawn?.();
@@ -200,6 +216,22 @@ async function init(loaderOverlay) {
     } catch (err) {
       console.warn("[EnemyPair] setup failed:", err);
       enemyAI = null;
+    }
+  }
+
+  if (FEATURES.hovercar ?? true) {
+    try {
+      hovercar = createHovercar({
+        scene,
+        renderer,
+        world,
+        camera,
+        getWalkControls: () => cameraDirector.walkControls,
+        isActive: () => (appShell?.isFinishedIntro?.() ?? false) && !playerState.dead,
+      });
+    } catch (err) {
+      console.warn("[hovercar] setup failed:", err);
+      hovercar = null;
     }
   }
 
@@ -277,10 +309,18 @@ async function init(loaderOverlay) {
     getIntroActive: introFlow.isIntroActive,
     onFrame: (delta) => {
       appShell.updateHud(delta);
+      try {
+        hovercar?.update(delta);
+      } catch (err) {
+        console.warn("[hovercar] update failed:", err);
+      }
       world.viewmodel?.update(delta, {
         camera,
         walkControls: cameraDirector.walkControls,
-        enabled: (appShell.isFinishedIntro?.() ?? false) && !playerState.dead,
+        enabled:
+          (appShell.isFinishedIntro?.() ?? false) &&
+          !playerState.dead &&
+          !vehicleState.driving,
       });
       try {
         enemyAI?.update(

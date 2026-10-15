@@ -12,8 +12,9 @@ import * as THREE from "three/webgpu";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { EnemyTrainingEnv } from "./EnemyTrainingEnv.js";
 import { createEnemyCombat } from "./enemyCombat.js"; // [combat]
+import { capTextureSize } from "../world/textureBudget.js"; // [gpu]
 
-const RESPAWN_AFTER_S = 8; // enemy comes back this long after dying
+const RESPAWN_AFTER_S = 15; // enemy comes back this long after dying
 const PLAYER_DAMAGE = 100; // one hit kills him
 
 const ADAM_SMASHER_URL = "/models/adam_smasher_rigged.glb?v=1791744626827";
@@ -208,6 +209,18 @@ export function setupEnemyAI({
           actions[name] = action;
           actions[name.toLowerCase()] = action;
         }
+        // [aim] right arm + spine + head aim; legs, hips and left arm keep walking
+        const AIM = /^(Spine\d*|Neck|Head|HeadTop|RightShoulder|RightArm|RightForeArm|RightHand)\./;
+        const subClip = (name, aimPart) => {
+          const src = gltf.animations.find((c) => c.name === name);
+          if (!src) return null;
+          const tracks = src.tracks.filter((t) => AIM.test(t.name) === aimPart);
+          if (!tracks.length) return null;
+          return mixer.clipAction(new THREE.AnimationClip(name + (aimPart ? "_aim" : "_body"), src.duration, tracks));
+        };
+        actions.AttackAim = subClip("Attack", true);
+        actions.WalkBody = subClip("Walk", false);
+        actions.IdleBody = subClip("Idle", false);
         console.info(
           "[EnemyAI] animations:",
           Object.keys(actions).filter((k, i, a) => a.indexOf(k) === i),
@@ -226,6 +239,7 @@ export function setupEnemyAI({
         console.info("[EnemyAI] no animations in GLB — static mesh");
       }
 
+      capTextureSize(root, 1024); // [gpu] 2048px maps -> 1024px (4x less VRAM per Adam)
       if (scene) scene.add(root);
       enemyRoot = root;
       combat.attach(root);
@@ -252,6 +266,14 @@ export function setupEnemyAI({
     }
     next.reset().setEffectiveWeight(1).fadeIn(0.2).play();
     currentAction = next;
+  }
+
+  let upperAction = null; // [aim]
+  function playUpper(next) {
+    if (upperAction === next) return;
+    if (upperAction) upperAction.fadeOut(0.2);
+    if (next) next.reset().setEffectiveWeight(1).fadeIn(0.2).play();
+    upperAction = next;
   }
 
   function syncEnemyVisual(delta = 1 / 60) {
@@ -290,14 +312,21 @@ export function setupEnemyAI({
     const moved = movingFor > 0;
 
     let want = idleClip;
+    let upper = null;
     if (!alive) want = dieClip || idleClip;
-    else if (state === "attack" && attackClip) want = attackClip;
+    else if (state === "attack" && attackClip) {
+      if (actions.AttackAim && actions.WalkBody && actions.IdleBody) {
+        want = moved ? actions.WalkBody : actions.IdleBody;
+        upper = actions.AttackAim;
+      } else want = attackClip;
+    }
     else if (moved) want = state === "chase" ? runClip : walkClip;
     if (dieClip && want === dieClip) {
       dieClip.setLoop(THREE.LoopOnce, 1);
       dieClip.clampWhenFinished = true;
     }
     if (want) playClip(want);
+    playUpper(upper);
   }
 
   function ensureFallback(sceneRef) {

@@ -32,6 +32,8 @@ export const FEATURES = {
   gameWalk: true,
   /** Spawn Adam Smasher enemy NPC (GLB + TrainingEnv). */
   trainEnemies: true,
+  /** Walk-up hovercar you can enter, drive and fly. */
+  hovercar: true,
 };
 
 export const STRIP_ORDER = [

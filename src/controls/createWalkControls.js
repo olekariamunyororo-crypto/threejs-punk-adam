@@ -784,6 +784,11 @@ export function createWalkControls({
     hasTouchLooked: () => hasTouchLooked,
     isMoving: () => moving,
     getHorizontalSpeed: () => currentVelocity.length(),
+    /** Raw move intent (keys or joystick): x right, y back (-1 = forward). [hovercar] */
+    getInput() {
+      buildMoveInput();
+      return { x: moveInput.x, y: moveInput.y, sprint: keys.sprint };
+    },
     setMoveAxes,
     applyLookDelta,
     update,
