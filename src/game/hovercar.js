@@ -2,6 +2,7 @@ import * as THREE from "three/webgpu";
 import { getGltfLoader } from "../world/loaders/createGltfLoaders.js";
 import { buildModelBvh } from "../world/bvh.js";
 import { getAudioVolume } from "../audio/audioState.js";
+import { createFerrariEngine } from "../audio/ferrariEngine.js"; // [ferrari]
 import { createHovercarPhysics, HOVER } from "./hovercarPhysics.js";
 import { vehicleState } from "./vehicleState.js";
 import { capTextureSize } from "../world/textureBudget.js"; // [gpu]
@@ -197,7 +198,7 @@ export function createHovercar({ scene, renderer, world, camera, getWalkControls
   collider.geometry.computeBoundsTree?.();
   scene.add(collider);
 
-  const engine = createEngineAudio();
+  const engine = createFerrariEngine({ getVolume: () => getAudioVolume?.() ?? 0.5 });
   const input = { up: false, down: false, boost: false };
   const ui = typeof document !== "undefined"
     ? createUi({
@@ -471,7 +472,7 @@ export function createHovercar({ scene, renderer, world, camera, getWalkControls
     camera.fov += (baseFov + speedN * 14 + (boost ? 5 : 0) - camera.fov) * (1 - Math.exp(-4 * dt));
     camera.updateProjectionMatrix();
     ui?.setSpeed(ps.forwardSpeed * 3.6, ps.alt);
-    engine.update(speedN, boost && inp.y < 0, clamp(ps.alt / 20, 0, 1));
+    engine.update({ speed: Math.abs(ps.forwardSpeed), throttle: clamp(Math.abs(throttle), 0, 1), boost, alt: ps.alt }, dt);
     if (exitWanted && Math.abs(ps.forwardSpeed) < 5 && ps.alt < 0.5) startExit();
   }
 

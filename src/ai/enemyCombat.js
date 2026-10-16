@@ -1,4 +1,6 @@
 import * as THREE from "three/webgpu";
+import { playBerettaShot } from "../audio/berettaShot.js"; // [beretta]
+import { getAudioVolume } from "../audio/audioState.js";
 
 /**
  * Enemy pistol + shooting + hit detection.
@@ -148,40 +150,14 @@ export function createEnemyCombat({ scene, camera, getPlayerSpeed = () => 0, onP
     return { mesh: m, active: false, o: new THREE.Vector3(), d: new THREE.Vector3(), len: 0, t: 0, hit: false };
   });
 
-  let audioCtx = null, noise = null;
+  let audioCtx = null;
   function shotSound(dist) {
     try {
       const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
       if (!AC) return;
-      if (!audioCtx) {
-        audioCtx = new AC();
-        noise = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.25), audioCtx.sampleRate);
-        const d = noise.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-      }
+      if (!audioCtx) audioCtx = new AC();
       if (audioCtx.state === "suspended") audioCtx.resume?.();
-      const c = audioCtx, t = c.currentTime, vol = Math.min(1, 1.8 / (1 + dist / 6));
-      const n = c.createBufferSource();
-      n.buffer = noise;
-      const hp = c.createBiquadFilter();
-      hp.type = "highpass";
-      hp.frequency.value = 900;
-      const ng = c.createGain();
-      ng.gain.setValueAtTime(0.7 * vol, t);
-      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-      n.connect(hp).connect(ng).connect(c.destination);
-      n.start(t);
-      n.stop(t + 0.18);
-      const o = c.createOscillator();
-      o.type = "sine";
-      o.frequency.setValueAtTime(150, t);
-      o.frequency.exponentialRampToValueAtTime(48, t + 0.1);
-      const og = c.createGain();
-      og.gain.setValueAtTime(0.6 * vol, t);
-      og.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-      o.connect(og).connect(c.destination);
-      o.start(t);
-      o.stop(t + 0.14);
+      playBerettaShot(audioCtx, { dist, volume: getAudioVolume?.() ?? 1 });
     } catch {
       /* audio is optional */
     }
