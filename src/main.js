@@ -52,6 +52,7 @@ import {
 import { FEATURES } from "./world/features.js";
 import { installGpuWatch } from "./debug/gpuWatch.js"; // [gpu]
 import { setupEnemyPair } from "./ai/setupEnemyPair.js";
+import { setupSamurai } from "./ai/setupSamurai.js"; // [samurai]
 
 const loader = createLoaderOverlay();
 
@@ -205,6 +206,33 @@ async function init(loaderOverlay) {
           cameraDirector.walkControls?.getHorizontalSpeed?.() ?? 0,
       });
       world.enemyAI = enemyAI;
+      // [samurai] melee enemy joins ~9 s after start; he shares the enemy list, so your bullets,
+      // hovercar roadkill and respawns work on him automatically
+      if (FEATURES.samurai ?? true) {
+        setTimeout(() => {
+          try {
+            enemyAI.agents.push(
+              setupSamurai({
+                camera,
+                scene,
+                colliders,
+                ground: groundMesh,
+                model: world.city ?? null,
+                spawnPoints: [new THREE.Vector3(-100, -5.4, 30), new THREE.Vector3(-70, -5.4, 33), new THREE.Vector3(-110, -5.4, 38)],
+                onPlayerHit: () => {
+                  if (typeof vehicleState !== "undefined" && vehicleState.driving) {
+                    hovercar?.bulletImpact?.(); // bulletproof hovercar
+                    return;
+                  }
+                  playerState.hit(100);
+                },
+              }),
+            );
+          } catch (err) {
+            console.warn("[Samurai] setup failed:", err);
+          }
+        }, 9000);
+      }
       playerState.onRespawn = () => {
         hovercar?.reset?.();
         cameraDirector.resetCameraPose();
