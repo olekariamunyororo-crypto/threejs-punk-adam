@@ -1,5 +1,7 @@
 # threejs-punk-adam
 
+[![CI](https://github.com/olekariamunyororo-crypto/threejs-punk-adam/actions/workflows/ci.yml/badge.svg)](https://github.com/olekariamunyororo-crypto/threejs-punk-adam/actions/workflows/ci.yml)
+
 ![Cyberpunk rainy alley](./public/preview.jpg)
 
 **First-person combat fork** of [Threejs-Punk](https://github.com/ektogamat/threejs-conference) / [threejspunk.vercel.app](https://threejspunk.vercel.app/) — a rainy cyberpunk alley on **WebGPU + Three.js + TSL**, extended with **Adam Smasher NPCs**, **player shooting**, and an optional **hovercar**.
