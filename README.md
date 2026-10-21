@@ -4,10 +4,13 @@
 
 ![Cyberpunk rainy alley](./public/preview.jpg)
 
+**Live demo:** [https://threejs-punk-adam.vercel.app](https://threejs-punk-adam.vercel.app)
+
 **First-person combat fork** of [Threejs-Punk](https://github.com/ektogamat/threejs-conference) / [threejspunk.vercel.app](https://threejspunk.vercel.app/) — a rainy cyberpunk alley on **WebGPU + Three.js + TSL**, extended with **Adam Smasher NPCs**, **player shooting**, and an optional **hovercar**.
 
 | | |
 |---|---|
+| **Live demo** | [https://threejs-punk-adam.vercel.app](https://threejs-punk-adam.vercel.app) |
 | **Base scene** | Anderson Mancini · Sunag (TSL) — [TSL Workshop 2026](https://threejs.paris/) |
 | **This fork** | FPS layer: enemies, combat, vehicles (`olekariamunyororo-crypto/threejs-punk-adam`) |
 | **Stack** | Three.js `^0.185` (WebGPU + TSL), Vite 6, `three-mesh-bvh`, GSAP |
