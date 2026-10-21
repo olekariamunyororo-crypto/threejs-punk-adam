@@ -34,6 +34,8 @@ export const FEATURES = {
   trainEnemies: true,
   /** Walk-up hovercar you can enter, drive and fly. */
   hovercar: true,
+  /** Melee samurai NPC (~9s after start). Requires public/models/samurai.glb */
+  samurai: true,
 };
 
 export const STRIP_ORDER = [

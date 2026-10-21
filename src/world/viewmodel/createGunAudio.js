@@ -6,6 +6,7 @@
 
 const SHOT_URLS = [
   "/sounds/ak-74.mp3",
+  "/sounds/Ak-74.mp3", // case-sensitive FS (Linux) / historical asset name
   "/sounds/ak74-shot.mp3", // tiny legacy fallback in repo
 ];
 

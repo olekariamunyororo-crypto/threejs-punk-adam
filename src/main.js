@@ -208,7 +208,7 @@ async function init(loaderOverlay) {
       world.enemyAI = enemyAI;
       // [samurai] melee enemy joins ~9 s after start; he shares the enemy list, so your bullets,
       // hovercar roadkill and respawns work on him automatically
-      if (FEATURES.samurai ?? true) {
+      if (FEATURES.samurai) {
         setTimeout(() => {
           try {
             enemyAI.agents.push(
@@ -247,7 +247,7 @@ async function init(loaderOverlay) {
     }
   }
 
-  if (FEATURES.hovercar ?? true) {
+  if (FEATURES.hovercar) {
     try {
       hovercar = createHovercar({
         scene,
