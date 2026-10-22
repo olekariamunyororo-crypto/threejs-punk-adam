@@ -1,13 +1,18 @@
 ---
-description: Threejs-Punk — always read AGENTS.md before editing
+description: Threejs-Punk-Adam — always read AGENTS.md + playbook before editing
 alwaysApply: true
 ---
 
-# Threejs-Punk (WebGPU + TSL)
+# Threejs-Punk-Adam (WebGPU + TSL + FPS fork)
 
-Before changing code, read **[AGENTS.md](../../AGENTS.md)** (constraints, file routing, recipes).
+Before changing code, read:
+
+1. **[AGENTS.md](../../AGENTS.md)** — constraints, file routing, combat rules
+2. **[docs/AGENT_PLAYBOOK.md](../../docs/AGENT_PLAYBOOK.md)** — weapons / enemies / scenes / multiplayer phases
 
 - Stack: `three/webgpu`, `three/tsl`, Vite, no custom GLSL in `src/`.
-- Technique deep dives: [docs/techniques/](../../docs/techniques/README.md) (collision rain, wet ground, car droplets).
-- Human docs: [README.md](../../README.md). Feature stripping: [STRIP.md](../../STRIP.md).
-- Performance knobs: `src/platform/performanceProfile.js`. Code wins over docs.
+- Optional systems: `src/world/features.js` — never `FEATURES.x ?? true`.
+- Technique deep dives: [docs/techniques/](../../docs/techniques/README.md).
+- Human docs: [README.md](../../README.md). Stripping: [STRIP.md](../../STRIP.md).
+- Performance: `src/platform/performanceProfile.js`. Code wins over docs.
+- Linear team: Threejspunk-adam (`THR`). One issue → one PR.
