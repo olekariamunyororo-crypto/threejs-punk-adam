@@ -5,10 +5,13 @@ import { getAudioVolume } from "../audio/audioState.js";
 /**
  * Enemy pistol + shooting + hit detection.
  * Live-tune in the console:  __combat.hitBase = 1   (always hits)
+ *
+ * Hit/miss for AI shots is decided by EnemyTrainingEnv; pass forceHit when
+ * calling fire() so combat does not roll a second independent RNG (THR-7).
  */
 export const COMBAT = {
-  fireInterval: [0.9, 1.5], // seconds between enemy shots
-  hitBase: 0.5, // chance to hit at 0 m ...
+  fireInterval: [0.9, 1.5], // seconds between enemy shots (visual rate limit)
+  hitBase: 0.5, // chance to hit at 0 m ... (only if forceHit omitted)
   hitPerMetre: 0.03, // ... minus this per metre
   hitMin: 0.12,
   hitMax: 0.5,
@@ -196,8 +199,12 @@ export function createEnemyCombat({ scene, camera, getPlayerSpeed = () => 0, onP
     tr.mesh.visible = true;
   }
 
-  /** Called when env validated a shot (range, line of sight, aim). */
-  function fire() {
+  /**
+   * Play muzzle flash + tracer. Hit decision:
+   * - `{ forceHit: true|false }` — env already decided (preferred for AI shots)
+   * - omitted — legacy RNG (distance / movement falloff)
+   */
+  function fire(opts = {}) {
     if (clock < nextFire || !muzzle) return false;
     nextFire = clock + rand(COMBAT.fireInterval);
 
@@ -205,9 +212,14 @@ export function createEnemyCombat({ scene, camera, getPlayerSpeed = () => 0, onP
     const eye = camera.position;
     const dist = origin.distanceTo(eye);
 
-    let p = Math.min(COMBAT.hitMax, Math.max(COMBAT.hitMin, COMBAT.hitBase - COMBAT.hitPerMetre * dist));
-    if (getPlayerSpeed() > COMBAT.movingSpeed) p *= COMBAT.movingMult;
-    const hit = Math.random() < p;
+    let hit;
+    if (typeof opts.forceHit === "boolean") {
+      hit = opts.forceHit;
+    } else {
+      let p = Math.min(COMBAT.hitMax, Math.max(COMBAT.hitMin, COMBAT.hitBase - COMBAT.hitPerMetre * dist));
+      if (getPlayerSpeed() > COMBAT.movingSpeed) p *= COMBAT.movingMult;
+      hit = Math.random() < p;
+    }
 
     end.copy(eye);
     end.y -= 0.2; // chest-ish

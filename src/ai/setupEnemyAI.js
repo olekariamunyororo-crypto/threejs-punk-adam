@@ -134,11 +134,14 @@ export function setupEnemyAI({
   trainingEnv.reset();
 
   const combat = createEnemyCombat({ scene, camera, getPlayerSpeed, onPlayerHit });
+  // Env owns hit decision; combat only VFX + apply damage when forceHit is true (THR-7).
   const tryShootOrig = trainingEnv._tryShoot.bind(trainingEnv);
   trainingEnv._tryShoot = function () {
     const ready = this.enemy.shootCooldown <= 0;
     tryShootOrig();
-    if (ready && this._hitPlayerThisStep) combat.fire();
+    if (ready && this._hitPlayerThisStep) {
+      combat.fire({ forceHit: true });
+    }
   };
 
   const brain = enableBrain ? createEnemyBrain(trainingEnv) : null;
@@ -363,7 +366,10 @@ export function setupEnemyAI({
     const actionName = brain.pickAction(delta);
     trainingEnv.settings.moveSpeed = brain.state === "chase" ? 3.9 : 1.8;
     const idx = trainingEnv.actions.indexOf(actionName);
-    trainingEnv.step(idx >= 0 ? idx : trainingEnv.actions.indexOf("idle"));
+    trainingEnv.step(
+      idx >= 0 ? idx : trainingEnv.actions.indexOf("idle"),
+      delta,
+    );
   }
 
   async function startTraining(algorithm = "dqn") {

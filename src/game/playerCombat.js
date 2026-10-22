@@ -6,6 +6,9 @@ let overlay = null;
 let btn = null;
 let armTimer = null;
 
+/** Post-respawn invulnerability duration (ms). */
+const INVULN_MS = 1500;
+
 function setVitals(pct) {
   const root = document.querySelector(".cyber-hud");
   if (!root) return;
@@ -37,11 +40,18 @@ function ensureOverlay() {
 export const playerState = {
   dead: false,
   health: 100,
+  /** performance.now() timestamp until which hits are ignored */
+  invulnUntil: 0,
   onRespawn: null,
 
-  /** Take damage; one default hit kills. */
+  isInvulnerable() {
+    return performance.now() < this.invulnUntil;
+  },
+
+  /** Take damage; one default hit kills. Ignored while invulnerable (THR-9). */
   hit(damage = 100) {
     if (this.dead) return;
+    if (this.isInvulnerable()) return;
     this.health = Math.max(0, this.health - damage);
     setVitals(this.health);
     if (this.health > 0) return;
@@ -62,6 +72,7 @@ export const playerState = {
     if (!this.dead) return;
     this.dead = false;
     this.health = 100;
+    this.invulnUntil = performance.now() + INVULN_MS;
     setVitals(100);
     if (overlay) {
       overlay.style.opacity = "0";

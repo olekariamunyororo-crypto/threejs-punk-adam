@@ -29,10 +29,17 @@ const DEFAULTS = {
   maxEpisodeSteps: 600,
   preferredEngageDistance: 10,
   shootRange: 28,
-  shootCooldownSteps: 18,
+  /** Seconds between shots (was 18 discrete 1/60 steps ≈ 0.3 s). */
+  shootCooldownSeconds: 0.3,
 };
 
 const WALL_LATERAL_OFFSETS = [0, -0.85, 0.85];
+
+/** Clamp frame delta for stability after tab switches / hitch. */
+function clampDt(delta) {
+  if (!Number.isFinite(delta) || delta <= 0) return 1 / 60;
+  return Math.min(delta, 0.05);
+}
 
 export class EnemyTrainingEnv {
   /**
@@ -59,6 +66,10 @@ export class EnemyTrainingEnv {
     settings = {},
   } = {}) {
     this.settings = { ...DEFAULTS, ...settings };
+    // Back-compat: old shootCooldownSteps → seconds
+    if (settings.shootCooldownSteps != null && settings.shootCooldownSeconds == null) {
+      this.settings.shootCooldownSeconds = settings.shootCooldownSteps / 60;
+    }
     this.camera = camera;
     this.colliders = Array.isArray(colliders) ? colliders : [];
     this.walkTargets = [];
@@ -91,6 +102,7 @@ export class EnemyTrainingEnv {
     this.lastDistance = 0;
     this._lastAction = "idle";
     this._hitPlayerThisStep = false;
+    this._lastDt = 1 / 60;
 
     this._raycaster = new THREE.Raycaster();
     this._probeOrigin = new THREE.Vector3();
@@ -128,18 +140,25 @@ export class EnemyTrainingEnv {
     ];
   }
 
-  step(actionIndex) {
+  /**
+   * @param {number} actionIndex
+   * @param {number} [delta=1/60] wall-clock frame delta in seconds
+   */
+  step(actionIndex, delta = 1 / 60) {
+    const dt = clampDt(delta);
+    this._lastDt = dt;
+
     const action = this.actions[actionIndex] ?? "idle";
     this._lastAction = action;
     this._hitPlayerThisStep = false;
     this.enemy.lastShotHit = false;
 
     if (this.enemy.shootCooldown > 0) {
-      this.enemy.shootCooldown--;
+      this.enemy.shootCooldown = Math.max(0, this.enemy.shootCooldown - dt);
     }
 
-    this._applyAction(action);
-    this._updatePhysics(1 / 60);
+    this._applyAction(action, dt);
+    this._updatePhysics(dt);
     this.stepCount++;
   }
 
@@ -199,7 +218,7 @@ export class EnemyTrainingEnv {
     this.lastDistance = this.enemy.position.distanceTo(this.camera.position);
   }
 
-  _applyAction(action) {
+  _applyAction(action, dt = 1 / 60) {
     const s = this.settings;
     this._moveDir.set(0, 0, 0);
 
@@ -217,10 +236,10 @@ export class EnemyTrainingEnv {
         this._moveDir.x = 1;
         break;
       case "turn_left":
-        this.enemy.yaw += s.turnSpeed * (1 / 60);
+        this.enemy.yaw += s.turnSpeed * dt;
         break;
       case "turn_right":
-        this.enemy.yaw -= s.turnSpeed * (1 / 60);
+        this.enemy.yaw -= s.turnSpeed * dt;
         break;
       case "shoot":
         this._tryShoot();
@@ -373,10 +392,14 @@ export class EnemyTrainingEnv {
     return hits.length === 0;
   }
 
+  /**
+   * Env owns eligibility + hit decision (range, LOS, aim).
+   * Combat layer only plays VFX and applies damage when lastShotHit is true.
+   */
   _tryShoot() {
     if (this.enemy.shootCooldown > 0) return;
 
-    this.enemy.shootCooldown = this.settings.shootCooldownSteps;
+    this.enemy.shootCooldown = this.settings.shootCooldownSeconds;
 
     const dist = this.enemy.position.distanceTo(this.camera.position);
     if (dist > this.settings.shootRange) return;
