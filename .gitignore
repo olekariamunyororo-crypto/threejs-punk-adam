@@ -136,3 +136,5 @@ dist
 .pnp.*
 .vercel
 .env*
+node_modules
+*.bak

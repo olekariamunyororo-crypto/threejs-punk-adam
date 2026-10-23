@@ -3,6 +3,7 @@ import { positionView, uniform, smoothstep, select } from "three/tsl";
 import { getGltfLoader } from "../loaders/createGltfLoaders.js";
 import { createGunAudio } from "./createGunAudio.js";
 import { createAmmoHud } from "./createAmmoHud.js";
+import { WEAPONS, ORDER, SWING_PIVOT, buildWeapons, pistolShot, katanaSwoosh, meleeStrike, swingPose } from "./weapons.js"; // [weapons]
 
 /**
  * First-person arms + VSK-94 (vsk.glb, "FPS animations VSK" by Cransh, CC-BY-4.0).
@@ -167,6 +168,18 @@ export async function createViewmodel({ scene, renderer, world }) {
   root.add(rig);
   scene.add(root);
 
+  // [weapons] pistol + katana ride on the rifle's animated bones (Body / Slider / Trigger)
+  const rifleMeshes = [];
+  const boneMap = {};
+  model.traverse((o) => {
+    if (o.isBone) boneMap[o.name] = o;
+    if (o.isSkinnedMesh && o.material?.name !== ARMS_MATERIAL_NAME) rifleMeshes.push(o);
+  });
+  const wpn = buildWeapons(boneMap);
+  let weapon = "rifle";
+  const stash = { rifle: null, pistol: { ammo: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve } };
+  const magOf = () => (weapon === "rifle" ? p.magSize : WEAPONS[weapon].magSize);
+
   // --- muzzle flash -------------------------------------------------------
   const flash = new THREE.Sprite(
     new THREE.SpriteMaterial({
@@ -282,6 +295,11 @@ export async function createViewmodel({ scene, renderer, world }) {
     fireHold: 0,
     fireActive: false,
     triggerHeld: false,
+    triggerEdge: false,
+    swingT: -1,
+    swingKind: 0,
+    swingHit: false,
+    drawT: 0,
     enabled: false,
   };
 
@@ -294,9 +312,82 @@ export async function createViewmodel({ scene, renderer, world }) {
   const hitNormal = new THREE.Vector3();
 
   function syncHud() {
-    hud.set(state.ammo, state.reserve, state.reloading);
+    hud.set(state.ammo, state.reserve, state.reloading, WEAPONS[weapon].label, weapon === "katana");
   }
   syncHud();
+
+  // [weapons] switching, katana swing, rig motion ---------------------------------
+  function applyWeaponVisibility() {
+    rifleMeshes.forEach((m) => (m.visible = weapon === "rifle"));
+    wpn.pistol.visible = weapon === "pistol";
+    wpn.katana.visible = weapon === "katana";
+  }
+  function selectWeapon(next) {
+    if (!WEAPONS[next] || next === weapon) return;
+    if (weapon !== "katana") stash[weapon] = { ammo: state.ammo, reserve: state.reserve };
+    if (state.reloading) {
+      state.reloadAction?.fadeOut(0.1);
+      state.reloadAction = null;
+      state.reloading = false;
+    }
+    if (state.fireActive) {
+      actions.fire?.fadeOut(0.08);
+      state.fireActive = false;
+    }
+    state.swingT = -1;
+    state.triggerHeld = false;
+    state.triggerEdge = false;
+    weapon = next;
+    if (next === "rifle") {
+      const st = stash.rifle ?? { ammo: p.magSize, reserve: p.reserve };
+      state.ammo = st.ammo;
+      state.reserve = st.reserve;
+    } else if (next === "pistol") {
+      state.ammo = stash.pistol.ammo;
+      state.reserve = stash.pistol.reserve;
+    }
+    applyWeaponVisibility();
+    state.drawT = 0.24;
+    audio.click(0.0);
+    syncHud();
+  }
+  const cycleWeapon = () => selectWeapon(ORDER[(ORDER.indexOf(weapon) + 1) % ORDER.length]);
+  function startSwing() {
+    state.swingT = 0;
+    state.swingKind ^= 1;
+    state.swingHit = false;
+    state.fireCooldown = WEAPONS.katana.cooldown;
+    katanaSwoosh();
+  }
+  const _qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+  const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
+  function applyRigMotion(delta, camera) {
+    let dy = 0;
+    if (state.drawT > 0) {
+      state.drawT = Math.max(0, state.drawT - delta);
+      const k = state.drawT / 0.24;
+      dy = -0.22 * k * k;
+    }
+    if (state.swingT >= 0) {
+      state.swingT += delta;
+      if (!state.swingHit && state.swingT >= WEAPONS.katana.hitAt) {
+        state.swingHit = true;
+        meleeStrike(camera, world);
+      }
+      if (state.swingT >= WEAPONS.katana.duration) state.swingT = -1;
+    }
+    if (state.swingT >= 0) {
+      const sp = swingPose(state.swingKind, state.swingT);
+      _e.set(sp.r[0], sp.r[1], sp.r[2], "YXZ");
+      _q.setFromEuler(_e);
+      _v.copy(rig.position).sub(SWING_PIVOT).applyQuaternion(_q).add(SWING_PIVOT).add(_v2.set(sp.d[0], sp.d[1] + dy, sp.d[2]));
+      rig.position.copy(_v);
+      rig.quaternion.copy(_q).multiply(_qy);
+    } else {
+      rig.position.y += dy;
+      rig.quaternion.copy(_qy);
+    }
+  }
 
   function fireRay(camera) {
     const targets = world?.focusTargets ?? [];
@@ -324,13 +415,14 @@ export async function createViewmodel({ scene, renderer, world }) {
 
   function shoot(camera) {
     state.ammo -= 1;
-    state.fireCooldown = p.fireInterval;
-    state.fireHold = 0.28;
+    state.fireCooldown = weapon === "pistol" ? WEAPONS.pistol.fireInterval : p.fireInterval;
+    state.fireHold = weapon === "pistol" ? WEAPONS.pistol.fireHold : 0.28;
     state.fireActive = true;
 
     const fire = actions.fire;
     if (fire) {
       fire.reset();
+      fire.setEffectiveTimeScale(weapon === "pistol" ? 2.4 : 1);
       fire.setEffectiveWeight(1);
       fire.fadeIn(0.02);
       fire.play();
@@ -341,7 +433,8 @@ export async function createViewmodel({ scene, renderer, world }) {
     flash.scale.setScalar(0.35 + Math.random() * 0.2);
     flashLife = 0.05;
 
-    audio.shot();
+    if (weapon === "pistol") pistolShot();
+    else audio.shot();
     fireRay(camera);
     syncHud();
 
@@ -351,7 +444,7 @@ export async function createViewmodel({ scene, renderer, world }) {
   }
 
   function startReload() {
-    if (state.reloading || state.reserve <= 0 || state.ammo >= p.magSize) {
+    if (weapon === "katana" || state.reloading || state.reserve <= 0 || state.ammo >= magOf()) {
       return;
     }
     const action = state.ammo === 0 ? actions.reloadEmpty : actions.reloadPartial;
@@ -383,7 +476,7 @@ export async function createViewmodel({ scene, renderer, world }) {
     state.reloadAction = null;
     state.reloading = false;
 
-    const need = p.magSize - state.ammo;
+    const need = magOf() - state.ammo;
     const taken = Math.min(need, state.reserve);
     state.ammo += taken;
     state.reserve -= taken;
@@ -401,6 +494,7 @@ export async function createViewmodel({ scene, renderer, world }) {
     // First click only grabs pointer lock; shoot once it's already locked.
     if (walkControlsRef?.isPointerLocked?.()) {
       state.triggerHeld = true;
+      state.triggerEdge = true;
     }
   }
   function onMouseUp(event) {
@@ -412,6 +506,12 @@ export async function createViewmodel({ scene, renderer, world }) {
     if (event.code === "KeyR" && state.enabled && !event.repeat) {
       startReload();
     }
+    if (state.enabled && !event.repeat) {
+      if (event.code === "Digit1") selectWeapon("rifle");
+      else if (event.code === "Digit2") selectWeapon("pistol");
+      else if (event.code === "Digit3") selectWeapon("katana");
+      else if (event.code === "KeyQ") cycleWeapon();
+    }
   }
   window.addEventListener("mousedown", onMouseDown);
   window.addEventListener("mouseup", onMouseUp);
@@ -421,6 +521,7 @@ export async function createViewmodel({ scene, renderer, world }) {
     onFireDown: () => {
       if (state.enabled) {
         state.triggerHeld = true;
+        state.triggerEdge = true;
       }
     },
     onFireUp: () => {
@@ -429,6 +530,11 @@ export async function createViewmodel({ scene, renderer, world }) {
     onReload: () => {
       if (state.enabled) {
         startReload();
+      }
+    },
+    onSwap: () => {
+      if (state.enabled) {
+        cycleWeapon();
       }
     },
   });
@@ -459,12 +565,10 @@ export async function createViewmodel({ scene, renderer, world }) {
     root.scale.setScalar(1);
     const wide = camera.fov > p.wideFov;
     rig.position.set(...(wide ? p.positionWide : p.position));
+    applyRigMotion(delta, camera); // [weapons] draw animation + katana swing
     rigUniform.value.copy(rig.position);
-    flash.position.set(
-      rig.position.x + p.muzzle[0],
-      rig.position.y + p.muzzle[1],
-      rig.position.z + p.muzzle[2],
-    );
+    const mz = weapon === "pistol" ? WEAPONS.pistol.muzzle : p.muzzle;
+    flash.position.set(rig.position.x + mz[0], rig.position.y + mz[1], rig.position.z + mz[2]);
 
     // Locomotion.
     const speed = walkControls?.getHorizontalSpeed?.() ?? 0;
@@ -476,12 +580,16 @@ export async function createViewmodel({ scene, renderer, world }) {
 
     // Firing.
     state.fireCooldown = Math.max(0, state.fireCooldown - delta);
-    if (
+    if (weapon === "katana") {
+      if (state.triggerHeld && state.fireCooldown <= 0 && state.swingT < 0) startSwing();
+    } else if (
       state.triggerHeld &&
       !state.reloading &&
       state.ammo > 0 &&
-      state.fireCooldown <= 0
+      state.fireCooldown <= 0 &&
+      (weapon === "rifle" || state.triggerEdge)
     ) {
+      state.triggerEdge = false;
       shoot(camera);
     }
     if (state.fireActive) {
@@ -490,6 +598,12 @@ export async function createViewmodel({ scene, renderer, world }) {
         actions.fire?.fadeOut(0.15);
         state.fireActive = false;
       }
+    }
+
+    if (weapon === "pistol") {
+      const ra = state.reloadAction;
+      const pr = state.reloading && ra ? ra.time / (ra.getClip().duration || 1) : 0;
+      wpn.pistolMag.visible = !(pr > 0.18 && pr < 0.72); // mag out while reloading
     }
 
     mixer.update(delta);
@@ -526,9 +640,16 @@ export async function createViewmodel({ scene, renderer, world }) {
     state,
     update,
     reload: startReload,
+    selectWeapon,
+    cycleWeapon,
+    get weapon() {
+      return weapon;
+    },
     refill() {
-      state.ammo = p.magSize;
-      state.reserve = p.reserve;
+      stash.rifle = null;
+      stash.pistol = { ammo: WEAPONS.pistol.magSize, reserve: WEAPONS.pistol.reserve };
+      state.ammo = magOf();
+      state.reserve = weapon === "rifle" ? p.reserve : weapon === "pistol" ? WEAPONS.pistol.reserve : 0;
       state.reloading = false;
       syncHud();
     },

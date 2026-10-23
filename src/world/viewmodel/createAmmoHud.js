@@ -11,6 +11,7 @@ const CSS = `
 .vm-touch.is-visible{display:flex;align-items:center;justify-content:center}
 .vm-touch--fire{right:max(24px,env(safe-area-inset-right));bottom:120px;width:84px;height:84px}
 .vm-touch--reload{right:120px;bottom:150px;width:56px;height:56px}
+.vm-touch--swap{right:120px;bottom:226px;width:56px;height:56px}
 `;
 
 export function createAmmoHud() {
@@ -29,16 +30,23 @@ export function createAmmoHud() {
   const reloadBtn = document.createElement("button");
   reloadBtn.className = "vm-touch vm-touch--reload";
   reloadBtn.textContent = "R";
+  const swapBtn = document.createElement("button"); // [weapons]
+  swapBtn.className = "vm-touch vm-touch--swap";
+  swapBtn.textContent = "⇄";
 
   const coarse = window.matchMedia?.("(pointer: coarse)").matches;
   if (coarse) {
-    document.body.append(fireBtn, reloadBtn);
+    document.body.append(fireBtn, reloadBtn, swapBtn);
   }
 
-  function set(ammo, reserve, reloading) {
+  function set(ammo, reserve, reloading, label = "VSK-94", melee = false) {
+    if (melee) {
+      root.innerHTML = '<span class="vm-ammo__res" style="font-size:20px">KATANA</span><small>TAP FIRE TO SLASH</small>';
+      return;
+    }
     root.classList.toggle("is-empty", ammo === 0 && !reloading);
     root.innerHTML = `${ammo}<span class="vm-ammo__res"> / ${reserve}</span><small>${
-      reloading ? "RELOADING" : ammo === 0 ? "PRESS R" : "VSK-94"
+      reloading ? "RELOADING" : ammo === 0 ? "PRESS R" : label
     }</small>`;
   }
 
@@ -46,9 +54,14 @@ export function createAmmoHud() {
     root.classList.toggle("is-visible", visible);
     fireBtn.classList.toggle("is-visible", visible && coarse);
     reloadBtn.classList.toggle("is-visible", visible && coarse);
+    swapBtn.classList.toggle("is-visible", visible && coarse);
   }
 
-  function bindTouch({ onFireDown, onFireUp, onReload }) {
+  function bindTouch({ onFireDown, onFireUp, onReload, onSwap }) {
+    swapBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      onSwap?.();
+    });
     fireBtn.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       fireBtn.setPointerCapture?.(e.pointerId);
@@ -67,6 +80,7 @@ export function createAmmoHud() {
     root.remove();
     fireBtn.remove();
     reloadBtn.remove();
+    swapBtn.remove();
     style.remove();
   }
 
