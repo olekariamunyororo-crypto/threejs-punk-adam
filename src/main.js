@@ -54,10 +54,10 @@ import { installGpuWatch } from "./debug/gpuWatch.js"; // [gpu]
 import { setupEnemyPair } from "./ai/setupEnemyPair.js";
 import { setupSamurai } from "./ai/setupSamurai.js"; // [samurai]
 import {
-  initDatadogRum,
+  initMixpanel,
   trackAction,
   trackError,
-} from "./observability/datadogRum.js";
+} from "./observability/mixpanel.js";
 
 const loader = createLoaderOverlay();
 
@@ -69,7 +69,7 @@ init(loader).catch((error) => {
 });
 
 async function init(loaderOverlay) {
-  await initDatadogRum();
+  await initMixpanel();
 
   applyDevicePerformanceDefaults();
   syncLayoutClass();
