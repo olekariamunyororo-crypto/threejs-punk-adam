@@ -53,15 +53,24 @@ import { FEATURES } from "./world/features.js";
 import { installGpuWatch } from "./debug/gpuWatch.js"; // [gpu]
 import { setupEnemyPair } from "./ai/setupEnemyPair.js";
 import { setupSamurai } from "./ai/setupSamurai.js"; // [samurai]
+import {
+  initDatadogRum,
+  trackAction,
+  trackError,
+} from "./observability/datadogRum.js";
 
 const loader = createLoaderOverlay();
 
 init(loader).catch((error) => {
   loader.fail("Failed to load. Check the console for details.");
   console.error("Failed to initialize scene:", error);
+  trackAction("webgpu_fail", { phase: "init" });
+  trackError(error, { phase: "init" });
 });
 
 async function init(loaderOverlay) {
+  await initDatadogRum();
+
   applyDevicePerformanceDefaults();
   syncLayoutClass();
 
@@ -75,7 +84,15 @@ async function init(loaderOverlay) {
   loaderOverlay.setProgress(0.1);
   loaderOverlay.setStatus("SPINNING UP RENDERER");
 
-  const { renderer } = await createRenderer();
+  let renderer;
+  try {
+    ({ renderer } = await createRenderer());
+    trackAction("webgpu_ready");
+  } catch (error) {
+    trackAction("webgpu_fail", { phase: "createRenderer" });
+    trackError(error, { phase: "createRenderer" });
+    throw error;
+  }
   installGpuWatch(renderer); // [gpu]
 
   loaderOverlay.setProgress(0.2);
@@ -93,12 +110,15 @@ async function init(loaderOverlay) {
     loaderOverlay,
     requestShadowMapUpdate,
   });
+  trackAction("world_ready");
 
   loaderOverlay.setStatus("ARMING");
   try {
     world.viewmodel = await createViewmodel({ scene, renderer, world });
   } catch (error) {
     console.warn("[viewmodel] failed to load:", error);
+    trackAction("viewmodel_fail");
+    trackError(error, { phase: "viewmodel" });
     world.viewmodel = null;
   }
 
@@ -230,6 +250,8 @@ async function init(loaderOverlay) {
             );
           } catch (err) {
             console.warn("[Samurai] setup failed:", err);
+            trackAction("samurai_fail");
+            trackError(err, { phase: "samurai" });
           }
         }, 9000);
       }
@@ -243,6 +265,8 @@ async function init(loaderOverlay) {
       console.info("[EnemyPair] 2 NPCs (2nd delayed)");
     } catch (err) {
       console.warn("[EnemyPair] setup failed:", err);
+      trackAction("enemy_pair_fail");
+      trackError(err, { phase: "enemy_pair" });
       enemyAI = null;
     }
   }
@@ -402,6 +426,7 @@ async function init(loaderOverlay) {
   });
 
   await introFlow.run();
+  trackAction("intro_complete");
 
   if (!shouldCompileBeforeRenderLoop()) {
     await deferredCompile;
