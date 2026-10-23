@@ -1,131 +1,94 @@
-# Observability — Datadog RUM + metrics
+# Observability — Mixpanel (EU)
 
-Status: **sketch + client stub**. Datadog account/app must be created in the Datadog UI; Grok connector auth may be completed separately.
+Status: **client live** via `mixpanel-browser`. Telemetry is **off** until `VITE_MIXPANEL_TOKEN` is set.
 
 ## Goals
 
 | Signal | Why |
 |--------|-----|
-| Session RUM | Page load, errors, frustration |
-| WebGPU / boot | Black screens, init failures |
+| Boot / WebGPU | Black screens, init failures |
 | Asset load | Missing GLB / audio |
 | Combat health | Deaths, hit paths (sampled) |
-| Perf | FPS / long frames (sampled) |
+| Errors | Caught failures with stack snippet |
 
-## Datadog setup (UI)
+## Mixpanel setup (UI)
 
-1. Create a Datadog account (site: `datadoghq.com` or `datadoghq.eu`, etc.).
-2. **UX Monitoring → RUM Applications → New Application**
-   - Type: **Browser**
-   - Name: `threejs-punk-adam`
-3. Copy:
-   - **Application ID**
-   - **Client token** (browser-safe; not the API key)
-4. Optional: enable **Session Replay** (cost/privacy tradeoff).
-
-Do **not** put the server **API key** in frontend code.
+1. Open [Mixpanel EU](https://eu.mixpanel.com/) (data residency matches the client).
+2. Prefer project **Threejs-punk-adam** (id `4076563`) or the token target already wired in code comments (`4076561`).
+3. **Project Settings → Project Token** — copy the **project token** (browser-safe).
+4. Do **not** put a service account secret or API secret in frontend code.
 
 ## Env vars (Vite)
 
 Set in Vercel project env and local `.env` (gitignored):
 
 ```bash
-VITE_DD_APPLICATION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-VITE_DD_CLIENT_TOKEN=pubxxxxxxxx
-VITE_DD_SITE=datadoghq.com
-VITE_DD_SERVICE=threejs-punk-adam
-VITE_DD_ENV=production
-# VITE_DD_ENV=development for local
+VITE_MIXPANEL_TOKEN=your_project_token
+# Optional overrides:
+VITE_MIXPANEL_API_HOST=https://api-eu.mixpanel.com
+VITE_MIXPANEL_ENV=production
+VITE_APP_VERSION=0.0.1
 ```
 
-If `VITE_DD_APPLICATION_ID` or `VITE_DD_CLIENT_TOKEN` is missing, RUM stays **off** (no network calls).
+If `VITE_MIXPANEL_TOKEN` is missing, `initMixpanel()` returns `false` and **no events** are sent.
 
-## Client stub
+## Client
 
-- Module: [`src/observability/datadogRum.js`](src/observability/datadogRum.js)
-- Booted from [`src/main.js`](src/main.js) before scene init
-- Package: `@datadog/browser-rum` (loaded dynamically only when env is set)
+| File | Role |
+|------|------|
+| [`src/observability/mixpanel.js`](src/observability/mixpanel.js) | Init + `trackAction` / `trackError` / `trackTiming` |
+| [`src/observability/datadogRum.js`](src/observability/datadogRum.js) | Thin re-export of Mixpanel (compat for older imports) |
+| [`src/main.js`](src/main.js) | Calls `initMixpanel()` at start of `init()` |
 
-### Custom actions / errors (API)
+Package: `mixpanel-browser` (see `package.json` / lockfile).
+
+### API
 
 ```js
-import { trackAction, trackError, trackTiming } from "./observability/datadogRum.js";
+import { trackAction, trackError, trackTiming } from "./observability/mixpanel.js";
 
 trackAction("webgpu_ready");
 trackError(error, { phase: "init" });
 trackTiming("glb_load_ms", durationMs, { model: "adam_smasher_rigged" });
 ```
 
-## Metric / event map (sketch)
+## Event map
 
-### RUM standard
-
-| Datadog view | Source |
-|--------------|--------|
-| Loading time, LCP-ish | RUM automatic |
-| JS errors | `trackError` + RUM error tracking |
-| Long tasks | RUM performance |
-
-### Custom actions (names stable for dashboards)
-
-| Action name | When |
-|-------------|------|
-| `boot_start` | `main` starts |
+| Event name | When |
+|------------|------|
+| `boot_start` | Mixpanel init succeeds |
 | `webgpu_ready` | Renderer created |
-| `webgpu_fail` | Renderer/init throws |
+| `webgpu_fail` | Renderer / top-level init throws |
 | `world_ready` | `createWorld` finished |
 | `viewmodel_fail` | Viewmodel catch |
-| `enemy_pair_fail` | Enemy setup catch |
+| `enemy_pair_fail` | Enemy pair setup catch |
 | `samurai_fail` | Samurai setup catch |
-| `glb_load_fail` | Loader failure (wire at load sites) |
-| `player_death` | `playerState` death (wire later) |
 | `intro_complete` | Intro flow done |
+| `error` | `trackError(...)` — includes `message`, optional `stack` |
+| `glb_load_fail` | Loader failure (wire at remaining load sites) |
+| `player_death` | Death (wire later if needed) |
 
-### Suggested Datadog metrics (from RUM actions → Metrics)
+Super-properties registered on init: `service`, `env`, `app_version`.
 
-Generate from RUM → **Generate Metrics**:
+## Vercel
 
-| Metric | Type | From |
-|--------|------|------|
-| `rum.action.webgpu_fail` | count | action name |
-| `rum.action.glb_load_fail` | count | action name |
-| `rum.action.player_death` | count | action name |
+1. Project → Settings → Environment Variables → add `VITE_MIXPANEL_TOKEN` (Production + Preview as needed).
+2. Redeploy after changing env (Vite inlines at **build** time).
+3. Confirm production deploy is **READY** (see Linear **THR-18** if builds fail — usually stale `package-lock.json`).
 
-Or use **Custom Measures** on actions with `trackTiming`:
+## Grok + Mixpanel connector
 
-| Measure | Unit |
-|---------|------|
-| `boot_ms` | ms end-to-end init |
-| `glb_load_ms` | per model |
-| `frame_p95_ms` | optional sampled |
-
-## Dashboards (sketch)
-
-1. **Health** — error rate, `webgpu_fail`, `glb_load_fail`
-2. **Perf** — load time, long tasks, optional FPS histogram
-3. **Gameplay** — `player_death` rate (if instrumented)
-
-## Monitors (sketch)
-
-| Monitor | Condition |
-|---------|-----------|
-| WebGPU fail spike | `webgpu_fail` count > N / 15m |
-| High JS error rate | RUM error rate > threshold |
-| Deploy regression | Compare env `production` vs prior hour |
-
-## Grok + Datadog connector
-
-When the **Datadog** connector is authorized in this chat, Grok can help query monitors/dashboards (API). **RUM still requires browser SDK + client token** in the app — the connector does not inject frontend scripts.
+This workspace’s Mixpanel MCP talks to **US** (`mcp.mixpanel.com`). EU projects require `mcp-eu.mixpanel.com`. Until the EU endpoint is connected, use the Mixpanel EU UI for Live View / Insights.
 
 ## Privacy
 
-- Avoid sending PII in action context.
-- Session Replay: disable or mask if required.
-- Sample high-frequency events (FPS) at low rate.
+- Avoid PII in event properties.
+- Autocapture is **off** — only explicit `track*` calls.
+- Sample high-frequency signals (FPS) if you add them later.
 
-## Next implementation steps
+## Next steps
 
-1. Connect Datadog in Grok (auth card) + create RUM app in Datadog UI.
-2. Set Vercel `VITE_DD_*` env → redeploy.
-3. Wire `trackError` / `trackAction` at remaining catch sites (loaders, death).
-4. Build dashboard + 1–2 monitors.
+1. Ensure lockfile includes `mixpanel-browser` (THR-18).
+2. Set `VITE_MIXPANEL_TOKEN` on Vercel → redeploy.
+3. Open Mixpanel Live View and load the site once; expect `boot_start` / `webgpu_ready`.
+4. Wire remaining loaders + `player_death` if dashboards need them.
